@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 from typing import Dict, List
 
@@ -11,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from proofreader.checkers.consistency_checker import ConsistencyIssue, IssueLevel, IssueType  # noqa: E402
+from proofreader.exporters import export_to_excel, export_to_word  # noqa: E402
 from proofreader.extractors.bid_splitter import BidSectionType, get_blocks_by_section  # noqa: E402
 from proofreader.pipeline import ProofreadResult, Proofreader  # noqa: E402
 
@@ -120,12 +122,41 @@ def render_issue_card(issue: ConsistencyIssue):
         )
 
 
+def _prepare_download(result: ProofreadResult, exporter) -> tuple[bytes, str]:
+    """生成报告文件并返回二进制内容和文件扩展名。"""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ext = ".docx" if exporter is export_to_word else ".xlsx"
+        path = Path(tmp_dir) / f"校对报告{ext}"
+        exporter(result, path)
+        return path.read_bytes(), ext
+
+
 def render_results(result: ProofreadResult):
     st.success(
         f"校对完成：共发现 {len(result.consistency_issues)} 处一致性/偏离问题，"
         f"{len(result.table_issues)} 处表格问题，{len(result.typo_issues)} 处错别字，"
         f"{len(result.ocr_issues)} 处截图问题。"
     )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        word_bytes, _ = _prepare_download(result, export_to_word)
+        st.download_button(
+            label="📄 导出 Word 报告",
+            data=word_bytes,
+            file_name="校对报告.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+        )
+    with c2:
+        excel_bytes, _ = _prepare_download(result, export_to_excel)
+        st.download_button(
+            label="📊 导出 Excel 清单",
+            data=excel_bytes,
+            file_name="校对报告.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
     tab_doc, tab_issues = st.tabs(["📑 文档对照", "⚠️ 问题清单"])
 
