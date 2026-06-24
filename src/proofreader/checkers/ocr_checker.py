@@ -1,6 +1,7 @@
 """对投标文件中的截图进行 OCR，并检查是否覆盖需求关键词。"""
 from __future__ import annotations
 
+import hashlib
 import io
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,36 +24,65 @@ class OcrIssue:
 
 
 class OcrEngine:
-    """OCR 引擎封装，按 (language_list, gpu) 缓存 Reader，避免重复加载模型。"""
+    """
+    OCR 引擎封装。
+    - 按 (language_list, gpu) 缓存 easyocr.Reader，避免重复加载模型。
+    - 按图片内容 hash 缓存 OCR 结果，避免对同一张图片重复识别。
+    """
 
-    _cache: ClassVar[Dict[tuple[tuple[str, ...], bool], object]] = {}
+    _reader_cache: ClassVar[Dict[tuple[tuple[str, ...], bool], object]] = {}
 
-    def __init__(self, use_gpu: bool = False, languages: List[str] | None = None):
+    def __init__(
+        self,
+        use_gpu: bool = False,
+        languages: List[str] | None = None,
+        result_cache_size: int = 256,
+    ):
         self.use_gpu = use_gpu
         self.languages = tuple(languages or ["ch_sim", "en"])
         self._reader: Optional[object] = None
+        self._result_cache: Dict[str, str] = {}
+        self._result_cache_size = max(1, result_cache_size)
+        self._result_cache_keys: List[str] = []
 
     def _get_reader(self):
         if self._reader is None:
             cache_key = (self.languages, self.use_gpu)
-            reader = self._cache.get(cache_key)
+            reader = self._reader_cache.get(cache_key)
             if reader is None:
                 import easyocr
 
                 reader = easyocr.Reader(list(self.languages), gpu=self.use_gpu)
-                self._cache[cache_key] = reader
+                self._reader_cache[cache_key] = reader
             self._reader = reader
         return self._reader
 
+    def _cache_result(self, image_hash: str, text: str) -> None:
+        """将 OCR 结果加入 LRU 缓存。"""
+        if image_hash in self._result_cache:
+            self._result_cache_keys.remove(image_hash)
+        elif len(self._result_cache_keys) >= self._result_cache_size:
+            oldest = self._result_cache_keys.pop(0)
+            self._result_cache.pop(oldest, None)
+        self._result_cache[image_hash] = text
+        self._result_cache_keys.append(image_hash)
+
     def recognize(self, image_blob: bytes) -> str:
-        """识别图片中的文字，直接传入 numpy 数组避免临时文件 I/O。"""
+        """识别图片中的文字，优先使用内容 hash 缓存。"""
+        image_hash = hashlib.sha256(image_blob).hexdigest()
+        cached = self._result_cache.get(image_hash)
+        if cached is not None:
+            return cached
+
         try:
             image: Image.Image = Image.open(io.BytesIO(image_blob))
             if image.mode != "RGB":
                 image = image.convert("RGB")
             array = np.asarray(image)
             result = self._get_reader().readtext(array, detail=0)
-            return "\n".join(result)
+            text = "\n".join(result)
+            self._cache_result(image_hash, text)
+            return text
         except Exception:
             return ""
 
