@@ -493,28 +493,28 @@ def main():
         bid_paths = save_uploaded_files(bid_files)
 
         proofreader = Proofreader()
-            progress_bar = st.progress(0.0)
-            status_text = st.empty()
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
 
-            items: List[BatchResultItem] = []
-            errors: List[BatchProofreadError] = []
+        items: List[BatchResultItem] = []
+        errors: List[BatchProofreadError] = []
 
-            with st.status("正在执行批量校对...", expanded=True) as status:
-                for idx, bid_path in enumerate(bid_paths, start=1):
-                    status_text.text(f"正在校对投标文件：{bid_path.name}（{idx}/{total_bids}）")
-                    progress_bar.progress(idx / total_bids)
-                    # 逐份调用公共 API，保留进度反馈
-                    single_result = proofreader.proofread_batch(
-                        req_paths, [bid_path], cache_dir=Path(".cache")
-                    )
-                    items.extend(single_result.items)
-                    errors.extend(single_result.errors)
-                    for err in single_result.errors:
-                        st.write(f"❌ {err.bid_path.name} 校对失败：{err.error}")
-                status.update(label="批量校对完成", state="complete")
+        with st.status("正在执行批量校对...", expanded=True) as status:
+            for idx, bid_path in enumerate(bid_paths, start=1):
+                status_text.text(f"正在校对投标文件：{bid_path.name}（{idx}/{total_bids}）")
+                progress_bar.progress(idx / total_bids)
+                # 逐份调用公共 API，保留进度反馈
+                single_result = proofreader.proofread_batch(
+                    req_paths, [bid_path], cache_dir=Path(".cache")
+                )
+                items.extend(single_result.items)
+                errors.extend(single_result.errors)
+                for err in single_result.errors:
+                    st.write(f"❌ {err.bid_path.name} 校对失败：{err.error}")
+            status.update(label="批量校对完成", state="complete")
 
-            st.session_state.batch_result = ProofreadBatchResult(items=items, errors=errors)
-            st.rerun()
+        st.session_state.batch_result = ProofreadBatchResult(items=items, errors=errors)
+        st.rerun()
 
     # 展示结果
     if st.session_state.batch_result is not None:
