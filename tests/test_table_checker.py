@@ -1,5 +1,8 @@
 """测试表格内容比对。"""
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from proofreader.checkers.table_checker import check_tables
 from proofreader.parsers.docx_parser import ParsedDocument

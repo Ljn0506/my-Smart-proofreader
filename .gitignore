@@ -31,3 +31,8 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# 个人会话记录与本地测试文档
+agtalk.md
+会话记录*.md
+测试文件/

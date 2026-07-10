@@ -38,6 +38,30 @@ def _normalize(text: str) -> str:
     return text.lower()
 
 
+# 单位简写 -> 标准写法（小写）
+_UNIT_ALIASES = {
+    "g": "gb",
+    "m": "mb",
+    "t": "tb",
+}
+
+
+_UNIT_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(gb|g|mb|m|tb|t)\b", re.IGNORECASE)
+
+
+def _normalize_cell(text: str) -> str:
+    """归一化单元格内容，包括统一 GB/G、MB/M、TB/T 等单位简写。"""
+    text = _normalize(text)
+
+    def _replace_unit(match: re.Match) -> str:
+        num = match.group(1)
+        unit = match.group(2).lower()
+        unit = _UNIT_ALIASES.get(unit, unit)
+        return f"{num}{unit}"
+
+    return _UNIT_PATTERN.sub(_replace_unit, text)
+
+
 def _table_signature(table: List[List[str]]) -> str:
     """用表头生成表格签名，用于匹配。"""
     if not table:
@@ -63,7 +87,7 @@ def _row_keys(table: List[List[str]]) -> set[str]:
 def _match_tables(
     req_tables: List[List[List[str]]],
     bid_tables: List[List[List[str]]],
-    threshold: float = 0.5,
+    threshold: float = 0.35,
 ) -> List[Tuple[int, int, float]]:
     """
     将需求表格与投标表格按表头语义 + 行键重叠度匹配。
@@ -119,39 +143,62 @@ def _compare_tables(
     req_table: List[List[str]],
     bid_table: List[List[str]],
 ) -> List[str]:
-    """比对两个已匹配表格的内容差异。"""
+    """比对两个已匹配表格的内容差异（按第一列行键对齐）。"""
     details: List[str] = []
 
-    req_rows = len(req_table)
-    bid_rows = len(bid_table)
-    if req_rows != bid_rows:
-        details.append(f"行数不一致：需求 {req_rows} 行，投标 {bid_rows} 行")
+    if not req_table or not bid_table:
+        return details
 
-    req_cols = max(len(row) for row in req_table) if req_table else 0
-    bid_cols = max(len(row) for row in bid_table) if bid_table else 0
-    if req_cols != bid_cols:
-        details.append(f"列数不一致：需求 {req_cols} 列，投标 {bid_cols} 列")
+    req_header = req_table[0]
+    bid_header = bid_table[0]
+    req_rows = req_table[1:]
+    bid_rows = bid_table[1:]
 
-    # 按单元格逐格比较
-    for r_idx, (req_row, bid_row) in enumerate(zip(req_table, bid_table)):
-        row_key = _normalize(req_row[0]) if req_row else ""
-        for c_idx, (req_cell, bid_cell) in enumerate(zip(req_row, bid_row)):
-            if c_idx == 0 and row_key:
-                # 第一列视为行键，通常应一致；若不一致单独提示
-                req_norm = _normalize(req_cell)
-                bid_norm = _normalize(bid_cell)
-                if req_norm and bid_norm and req_norm != bid_norm:
-                    details.append(
-                        f"第 {r_idx + 1} 行行键不一致：需求「{req_cell.strip()[:40]}」"
-                        f" vs 投标「{bid_cell.strip()[:40]}」"
-                    )
-                continue
-            req_norm = _normalize(req_cell)
-            bid_norm = _normalize(bid_cell)
+    if len(req_header) != len(bid_header):
+        details.append(
+            f"表头列数不一致：需求 {len(req_header)} 列，投标 {len(bid_header)} 列"
+        )
+
+    # 按行键建立投标行索引
+    bid_row_map: Dict[str, List[str]] = {}
+    duplicate_keys: set[str] = set()
+    for row in bid_rows:
+        if not row:
+            continue
+        key = _normalize(row[0])
+        if not key:
+            continue
+        if key in bid_row_map:
+            duplicate_keys.add(key)
+        else:
+            bid_row_map[key] = row
+
+    # 逐行对比：以需求行的行键去投标表格中找对应行
+    for req_row in req_rows:
+        if not req_row:
+            continue
+        req_key = _normalize(req_row[0])
+        if not req_key:
+            continue
+        if req_key not in bid_row_map:
+            details.append(f"行键「{req_row[0].strip()[:40]}」在投标表格中未找到")
+            continue
+
+        bid_row = bid_row_map[req_key]
+        if req_key in duplicate_keys:
+            details.append(
+                f"行键「{req_row[0].strip()[:40]}」在投标表格中重复出现，已取首次出现行进行比对"
+            )
+
+        max_cols = max(len(req_row), len(bid_row))
+        for c_idx in range(1, max_cols):
+            req_cell = req_row[c_idx] if c_idx < len(req_row) else ""
+            bid_cell = bid_row[c_idx] if c_idx < len(bid_row) else ""
+            req_norm = _normalize_cell(req_cell)
+            bid_norm = _normalize_cell(bid_cell)
             if req_norm and bid_norm and req_norm != bid_norm:
-                key_hint = f"（行：{row_key}）" if row_key else ""
                 details.append(
-                    f"第 {r_idx + 1} 行第 {c_idx + 1} 列不一致{key_hint}："
+                    f"行「{req_row[0].strip()[:40]}」第 {c_idx + 1} 列不一致："
                     f"需求「{req_cell.strip()[:40]}」 vs 投标「{bid_cell.strip()[:40]}」"
                 )
 

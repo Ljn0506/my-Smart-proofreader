@@ -2,7 +2,10 @@
 python-docx>=1.1.0
 
 # 桌面 UI
-streamlit>=1.35.0
+streamlit>=1.36.0
+
+# XML 处理（python-docx 已间接引入，标注模块直接依赖，显式声明）
+lxml>=4.9.0
 
 # 文本匹配与相似度
 scikit-learn>=1.4.0

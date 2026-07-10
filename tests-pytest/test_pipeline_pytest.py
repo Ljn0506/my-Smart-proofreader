@@ -24,8 +24,9 @@ def test_bid_sections_split(result: ProofreadResult) -> None:
 
 
 def test_consistency_issues_found(result: ProofreadResult) -> None:
-    """应检出 6 处一致性/偏离问题。"""
-    assert len(result.consistency_issues) == 6
+    """应检出 7 处一致性/偏离问题（含修复后的并发用户数不一致）。"""
+    assert len(result.consistency_issues) == 7
+    assert any("1000" in issue.message and "800" in issue.message for issue in result.consistency_issues)
 
 
 def test_typo_issues_found(result: ProofreadResult) -> None:
@@ -53,3 +54,18 @@ def test_proofreader_runs_on_real_files(sample_docs_dir: Path, proofreader: Proo
     assert isinstance(result, ProofreadResult)
     assert result.requirement_doc.path.exists()
     assert result.bid_doc.path.exists()
+
+
+def test_proofreader_runs_on_doc_files(sample_docs_dir: Path, proofreader: Proofreader) -> None:
+    """确保能直接对真实 .doc 文件执行校对。"""
+    req_doc_path = sample_docs_dir / "requirements.doc"
+    if not req_doc_path.exists():
+        pytest.skip("未找到 .doc 样例文件，跳过本测试")
+
+    result = proofreader.proofread(
+        req_doc_path,
+        sample_docs_dir / "bid.docx",
+    )
+    assert isinstance(result, ProofreadResult)
+    assert result.requirement_doc.path.suffix.lower() == ".doc"
+    assert len(result.requirements) == 9

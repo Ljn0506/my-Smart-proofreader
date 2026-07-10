@@ -15,8 +15,10 @@ from proofreader.parsers.docx_parser import TextBlock
 
 
 # 数字+单位正则
+# 允许数字与单位之间有少量修饰词（如"1000 并发用户"、"99.9%"）
 NUMBER_UNIT_PATTERN = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(核|核数|CPU|GB|G|TB|T|MB|M|年|月|日|天|小时|分钟|秒|ms|s|人|个|%|百分之|万元|元|次|QPS|TPS|套)",
+    r"(\d+(?:\.\d+)?)\s*(?:并发|在线|同时|核心|可用性|成功率|内存|存储|容量|带宽|延迟|响应|吞吐|支持|达到|约为|大约|约|大概)?\s*"
+    r"(核|核数|CPU|GB|G|TB|T|MB|M|年|月|日|天|小时|分钟|秒|ms|s|人|用户|个|%|百分之|万元|元|次|QPS|TPS|套)",
     re.IGNORECASE,
 )
 

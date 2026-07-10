@@ -1,6 +1,9 @@
-"""解析 Word .docx 文件，提取段落、标题、表格和图片位置。"""
+"""解析 Word .docx / .doc 文件，提取段落、标题、表格和图片位置。"""
 from __future__ import annotations
 
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -86,12 +89,75 @@ def _extract_raw_table(table: Table) -> List[List[str]]:
     return [[_cell_text(cell) for cell in row.cells] for row in table.rows]
 
 
-def parse_docx(path: Path | str) -> ParsedDocument:
-    """解析 docx 文件。"""
-    path = Path(path)
-    doc = Document(str(path))
+# LibreOffice / OpenOffice 可执行文件名（跨平台常见）
+_SOFFICE_CANDIDATES = ["soffice", "libreoffice"]
 
-    parsed = ParsedDocument(path=path)
+
+def find_soffice() -> str | None:
+    """在 PATH 中查找 soffice / libreoffice 命令。"""
+    for candidate in _SOFFICE_CANDIDATES:
+        executable = shutil.which(candidate)
+        if executable:
+            return executable
+    return None
+
+
+# 保留旧别名，兼容现有内部调用
+_find_soffice = find_soffice
+
+
+def convert_doc_to_docx(doc_path: Path, output_dir: Path) -> Path:
+    """使用 LibreOffice 将 .doc 转换为 .docx，返回转换后的文件路径。"""
+    soffice = find_soffice()
+    if soffice is None:
+        raise RuntimeError(
+            "检测到 .doc 文件，但未找到 LibreOffice 命令（soffice / libreoffice）。"
+            "请安装 LibreOffice 后重试，或先将文件另存为 .docx。"
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        soffice,
+        "--headless",
+        "--convert-to",
+        "docx",
+        "--outdir",
+        str(output_dir),
+        str(doc_path),
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode("utf-8", errors="ignore") if exc.stderr else ""
+        raise RuntimeError(f"转换 .doc 文件失败：{stderr or exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("转换 .doc 文件超时，请检查 LibreOffice 是否可用。") from exc
+
+    converted = output_dir / doc_path.with_suffix(".docx").name
+    if not converted.exists():
+        # LibreOffice 有时会重命名输出文件
+        candidates = list(output_dir.glob("*.docx"))
+        if not candidates:
+            raise RuntimeError("LibreOffice 转换 .doc 后未生成 .docx 文件。")
+        converted = candidates[0]
+    return converted
+
+
+# 保留旧别名，兼容现有内部调用
+_convert_doc_to_docx = convert_doc_to_docx
+
+
+def _parse_docx_document(doc_path: Path, original_path: Path) -> ParsedDocument:
+    """解析已转换/本身就是 .docx 的文档，返回 ParsedDocument（保留原始路径）。"""
+    doc = Document(str(doc_path))
+
+    parsed = ParsedDocument(path=original_path)
     block_index = 0
     para_index = 0
     # 记录每个顶层段落元素对应的文本块序号，用于后续图片定位
@@ -178,3 +244,17 @@ def parse_docx(path: Path | str) -> ParsedDocument:
             continue
 
     return parsed
+
+
+def parse_docx(path: Path | str) -> ParsedDocument:
+    """解析 Word 文件，支持 .docx 与 .doc（依赖 LibreOffice 转换）。"""
+    path = Path(path)
+    original_path = path
+
+    if path.suffix.lower() == ".doc":
+        with tempfile.TemporaryDirectory(prefix="smart_proofreader_doc_convert_") as tmp_dir_str:
+            tmp_dir = Path(tmp_dir_str)
+            converted_path = convert_doc_to_docx(path, tmp_dir)
+            return _parse_docx_document(converted_path, original_path)
+
+    return _parse_docx_document(path, original_path)

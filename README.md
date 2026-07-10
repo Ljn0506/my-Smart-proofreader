@@ -4,7 +4,8 @@
 
 ## 功能特性
 
-- **Word 解析**：支持 `.docx` 段落、标题、表格提取
+- **Word 解析**：支持 `.docx` / `.doc` 段落、标题、表格提取（.doc 依赖 LibreOffice 转换）
+- **多文件批量校对**：需求文件与投标文件均支持多选上传；系统先梳理合并全部需求文件，再基于全部需求逐项校对每个投标文件
 - **需求条目提取**：自动识别编号项、约束关键词、表格行
 - **投标文件分段**：自动识别商务、技术、价格三部分
 - **内容一致性检查**：技术参数、服务期限、交付时间等偏离检测
@@ -33,8 +34,8 @@ pip install -r requirements.txt
 
 ```bash
 source .venv/bin/activate
-PYTHONPATH=src python tests/generate_sample_docs.py
-PYTHONPATH=src python tests/test_pipeline.py
+PYTHONPATH=src /usr/bin/arch -arm64 python tests/generate_sample_docs.py
+PYTHONPATH=src /usr/bin/arch -arm64 python tests/test_pipeline.py
 ```
 
 ## 项目结构
@@ -67,4 +68,5 @@ smart-proofreader/
 ## 注意事项
 
 - OCR 首次运行会自动下载 easyocr 模型，需要联网。
+- `.doc` 文件需要通过 LibreOffice（`soffice` / `libreoffice`）转换为 `.docx` 后解析，请确保系统已安装 LibreOffice。
 - 所有文本校对逻辑在本地执行，不上传云端。

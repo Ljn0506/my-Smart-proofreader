@@ -31,8 +31,15 @@ COMMON_TYPO_DICT = {
     "培圳": "培训",
     "到贷": "到货",
     "合通": "合同",
+    "资职": "资质",
     "负偏离": "负偏离",
 }
+
+# 上下文相关错词：某些词单独可能是正确的，但在特定上下文中应为另一个词
+CONTEXT_TYPO_PATTERNS = [
+    # "反映"在描述系统性能/速度时通常为"响应"之误
+    (re.compile(r"反映\s*(迅速|速度|时间|快|慢|及时|灵敏|性能|能力)", re.IGNORECASE), "反映", "响应"),
+]
 
 # 单位错误模式
 UNIT_ERRORS = [
@@ -58,6 +65,19 @@ def check_typos(blocks: List[TextBlock]) -> List[TypoIssue]:
         # 检查常见错词
         for wrong, correct in COMMON_TYPO_DICT.items():
             for match in re.finditer(re.escape(wrong), text):
+                issues.append(
+                    TypoIssue(
+                        block=block,
+                        word=wrong,
+                        position=match.start(),
+                        suggestion=correct,
+                        message=f"疑似错别字：「{wrong}」建议改为「{correct}」",
+                    )
+                )
+
+        # 检查上下文相关错词
+        for pattern, wrong, correct in CONTEXT_TYPO_PATTERNS:
+            for match in pattern.finditer(text):
                 issues.append(
                     TypoIssue(
                         block=block,

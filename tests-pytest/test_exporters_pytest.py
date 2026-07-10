@@ -3,25 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from docx import Document
 from openpyxl import load_workbook
 
-from proofreader.exporters import export_to_excel, export_to_word
-from proofreader.pipeline import ProofreadResult
-
-
-def test_export_to_word_creates_file(sample_result: ProofreadResult) -> None:
-    """Word 导出应生成可读取的 docx 文件。"""
-    output = Path("/tmp/test_report.docx")
-    export_to_word(sample_result, output)
-
-    assert output.exists()
-    doc = Document(output)
-    text = "\n".join(p.text for p in doc.paragraphs)
-    assert "智能文档校对报告" in text
-    assert "校对摘要" in text
-
-    output.unlink(missing_ok=True)
+from proofreader.exporters import export_batch_to_excel, export_to_excel
+from proofreader.pipeline import ProofreadBatchResult, ProofreadResult
 
 
 def test_export_to_excel_creates_file(sample_result: ProofreadResult) -> None:
@@ -45,21 +30,20 @@ def test_export_to_excel_creates_file(sample_result: ProofreadResult) -> None:
     output.unlink(missing_ok=True)
 
 
-def test_export_to_word_empty_issues(tmp_path: Path) -> None:
-    """空问题列表时 Word 导出不应报错。"""
-    from proofreader.parsers.docx_parser import ParsedDocument
+def test_export_batch_to_excel_creates_file(sample_result: ProofreadResult, tmp_path: Path) -> None:
+    """批量 Excel 导出应为每份投标文件生成一个工作表。"""
+    from proofreader.pipeline import BatchResultItem, ProofreadBatchResult
 
-    empty_result = ProofreadResult(
-        requirement_doc=ParsedDocument(path=tmp_path / "req.docx"),
-        bid_doc=ParsedDocument(path=tmp_path / "bid.docx"),
-        requirements=[],
-        bid_sections=[],
-        matches=[],
-        consistency_issues=[],
-        typo_issues=[],
-        ocr_issues=[],
-        table_issues=[],
+    batch = ProofreadBatchResult(
+        items=[
+            BatchResultItem(Path("bid.docx"), sample_result, [Path("requirements.docx")]),
+            BatchResultItem(Path("bid_copy.docx"), sample_result, [Path("requirements_copy.docx")]),
+        ],
+        errors=[],
     )
-    output = tmp_path / "empty_report.docx"
-    export_to_word(empty_result, output)
+    output = tmp_path / "batch_report.xlsx"
+    export_batch_to_excel(batch, output)
     assert output.exists()
+
+    wb = load_workbook(output)
+    assert len(wb.sheetnames) == 2
