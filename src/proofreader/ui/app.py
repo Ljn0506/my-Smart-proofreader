@@ -63,12 +63,23 @@ ISSUE_TYPE_LABELS = {
 }
 
 
-def save_uploaded_files(uploaded_files: Sequence, tmp_dir: Path) -> List[Path]:
-    """保存上传的多个文件到指定临时目录，返回路径列表。
+def save_uploaded_files(uploaded_files: Sequence) -> List[Path]:
+    """保存上传的多个文件到项目临时目录，返回路径列表。
 
-    使用 UUID 前缀避免同名文件互相覆盖。
+    使用 UUID 前缀避免同名文件互相覆盖；目录在 .gitignore 中已排除。
+    每次新的上传批次会清理该目录中的旧文件（本地单用户场景）。
     """
+    tmp_dir = Path(".tmp_uploads")
     tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    # 清理旧上传文件，避免累积（本地桌面应用单用户使用）
+    for old_path in tmp_dir.iterdir():
+        if old_path.is_file():
+            try:
+                old_path.unlink()
+            except OSError:
+                pass
+
     paths: List[Path] = []
     for uploaded_file in uploaded_files:
         safe_name = Path(uploaded_file.name).name
@@ -478,12 +489,10 @@ def main():
         if total_bids > 10:
             st.info(f"本次将校对 {total_bids} 份投标文件，耗时可能较长，请耐心等待。")
 
-        with tempfile.TemporaryDirectory(prefix="smart_proofreader_upload_") as tmp_dir_str:
-            tmp_dir = Path(tmp_dir_str)
-            req_paths = save_uploaded_files(req_files, tmp_dir)
-            bid_paths = save_uploaded_files(bid_files, tmp_dir)
+        req_paths = save_uploaded_files(req_files)
+        bid_paths = save_uploaded_files(bid_files)
 
-            proofreader = Proofreader()
+        proofreader = Proofreader()
             progress_bar = st.progress(0.0)
             status_text = st.empty()
 
