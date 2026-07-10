@@ -63,13 +63,15 @@ ISSUE_TYPE_LABELS = {
 }
 
 
-def save_uploaded_files(uploaded_files: Sequence) -> List[Path]:
+def save_uploaded_files(uploaded_files: Sequence, subdir: str = "") -> List[Path]:
     """保存上传的多个文件到项目临时目录，返回路径列表。
 
     使用 UUID 前缀避免同名文件互相覆盖；目录在 .gitignore 中已排除。
-    每次新的上传批次会清理该目录中的旧文件（本地单用户场景）。
+    每次新的上传批次会清理该子目录中的旧文件（本地单用户场景）。
     """
     tmp_dir = Path(".tmp_uploads")
+    if subdir:
+        tmp_dir = tmp_dir / subdir
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
     # 清理旧上传文件，避免累积（本地桌面应用单用户使用）
@@ -489,8 +491,8 @@ def main():
         if total_bids > 10:
             st.info(f"本次将校对 {total_bids} 份投标文件，耗时可能较长，请耐心等待。")
 
-        req_paths = save_uploaded_files(req_files)
-        bid_paths = save_uploaded_files(bid_files)
+        req_paths = save_uploaded_files(req_files, subdir="requirements")
+        bid_paths = save_uploaded_files(bid_files, subdir="bids")
 
         proofreader = Proofreader()
         progress_bar = st.progress(0.0)
