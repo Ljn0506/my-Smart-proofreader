@@ -1,13 +1,10 @@
 """真实场景回归测试。
 
 这些测试记录了当前系统在真实投标文档中容易出现的漏检/误报问题。
-当前标记为 xfail，修复对应模块后应移除 xfail 标记。
 """
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
 
 from proofreader.checkers.consistency_checker import check_consistency
 from proofreader.checkers.table_checker import check_tables

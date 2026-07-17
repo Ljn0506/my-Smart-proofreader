@@ -41,6 +41,7 @@ class RequirementItem:
     is_numbered: bool = False
     constraint_keywords: List[str] = field(default_factory=list)
     level: int = 0
+    section_title: str = ""  # 所属产品/章节标题，用于与投标段落匹配
 
 
 def _has_numbering(text: str) -> bool:
@@ -75,22 +76,36 @@ def _is_likely_heading(block: TextBlock) -> bool:
     return False
 
 
+def _extract_section_title(text: str) -> str:
+    """从表格行文本中提取产品/章节标题（如 '网络回溯分析平台'）。"""
+    if " | " in text:
+        return text.split(" | ", 1)[0].strip()
+    return ""
+
+
 def extract_requirements(doc: ParsedDocument) -> List[RequirementItem]:
     """从解析后的需求文档中提取需求条目。"""
     items: List[RequirementItem] = []
     current_item: RequirementItem | None = None
+    last_heading: str = ""
 
     for block in doc.blocks:
         text = block.text.strip()
         if not text:
             continue
 
+        # 标题结束当前条目，并记录最近标题
         if _is_likely_heading(block):
-            # 标题结束当前条目，先追加
             if current_item is not None:
                 items.append(current_item)
                 current_item = None
+            last_heading = text
             continue
+
+        # 每个表格行视为独立需求条目（避免把同一产品下多行合并成超大条目）
+        if block.block_type == "table_row" and current_item is not None:
+            items.append(current_item)
+            current_item = None
 
         is_numbered = _has_numbering(text)
         constraints = _detect_constraints(text)
@@ -117,6 +132,7 @@ def extract_requirements(doc: ParsedDocument) -> List[RequirementItem]:
                 is_numbered=is_numbered,
                 constraint_keywords=constraints,
                 level=block.level,
+                section_title=_extract_section_title(text) or last_heading,
             )
         else:
             # 合并到当前条目（无编号的续行）
@@ -125,6 +141,8 @@ def extract_requirements(doc: ParsedDocument) -> List[RequirementItem]:
             current_item.text += "\n" + text
             current_item.source_blocks.append(block)
             current_item.constraint_keywords = _detect_constraints(current_item.text)
+            if not current_item.section_title:
+                current_item.section_title = _extract_section_title(text) or last_heading
 
     if current_item is not None:
         items.append(current_item)

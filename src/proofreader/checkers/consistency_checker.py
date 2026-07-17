@@ -41,7 +41,14 @@ class ConsistencyIssue:
     highlight_spans: List[str] = field(default_factory=list)
 
 
-TIME_UNITS = {"年": 365, "个月": 30, "月": 30, "天": 1, "日": 1, "小时": 1 / 24, "h": 1 / 24}
+@dataclass
+class UnitMeta:
+    """单位元数据：换算系数（time 类单位）与默认比较方向。"""
+
+    category: str  # "time" 或 "metric"
+    conversion: float | None = None  # 换算到基准单位（如天），非 time 单位为 None
+    default_direction: str | None = None  # 无量词方向时的默认方向
+
 
 THRESHOLD_KEYWORDS = {
     "≥": ("ge", True),
@@ -66,9 +73,64 @@ THRESHOLD_KEYWORDS = {
     "应为": ("ge", True),
 }
 
-# 当需求文本没有明确阈值方向词时，这些单位默认按"不少于"处理
-# （技术参数通常表示最低要求，如并发用户、可用性、内存等）
-DEFAULT_GE_UNITS = {"%", "人", "用户", "次", "个", "核", "gb", "g", "mb", "m", "tb", "t", "qps", "tps"}
+# 统一单位元数据表：合并原 TIME_UNITS 与原 DEFAULT_GE_UNITS，避免规则分散
+UNIT_METAS: dict[str, UnitMeta] = {
+    # 时间单位：带换算系数，默认方向 ≥
+    "年": UnitMeta("time", conversion=365, default_direction="ge"),
+    "个月": UnitMeta("time", conversion=30, default_direction="ge"),
+    "月": UnitMeta("time", conversion=30, default_direction="ge"),
+    "天": UnitMeta("time", conversion=1, default_direction="ge"),
+    "日": UnitMeta("time", conversion=1, default_direction="ge"),
+    "小时": UnitMeta("time", conversion=1 / 24, default_direction="ge"),
+    "h": UnitMeta("time", conversion=1 / 24, default_direction="ge"),
+    # 常用技术参数单位：默认方向 ≥
+    "%": UnitMeta("metric", default_direction="ge"),
+    "人": UnitMeta("metric", default_direction="ge"),
+    "用户": UnitMeta("metric", default_direction="ge"),
+    "次": UnitMeta("metric", default_direction="ge"),
+    "个": UnitMeta("metric", default_direction="ge"),
+    "核": UnitMeta("metric", default_direction="ge"),
+    "gb": UnitMeta("metric", default_direction="ge"),
+    "g": UnitMeta("metric", default_direction="ge"),
+    "mb": UnitMeta("metric", default_direction="ge"),
+    "m": UnitMeta("metric", default_direction="ge"),
+    "tb": UnitMeta("metric", default_direction="ge"),
+    "t": UnitMeta("metric", default_direction="ge"),
+    "qps": UnitMeta("metric", default_direction="ge"),
+    "tps": UnitMeta("metric", default_direction="ge"),
+}
+
+
+@dataclass
+class Quantity:
+    """从文本中提取的数值+单位+比较方向。"""
+
+    value: float
+    unit: str
+    direction: str
+    position: int
+    meta: UnitMeta | None = None
+
+    @property
+    def normalized_value(self) -> float:
+        """换算到基准单位后的值；无换算系数时返回原值。"""
+        if self.meta is not None and self.meta.conversion is not None:
+            return self.value * self.meta.conversion
+        return self.value
+
+    @property
+    def is_time(self) -> bool:
+        """是否为时间类量值。"""
+        return self.meta is not None and self.meta.category == "time"
+
+
+_TIME_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(年|个月|月|天|日|小时|h)")
+
+_NUMBER_PATTERN = re.compile(
+    r"(?<![A-Za-z])(\d+(?:\.\d+)?)\s*(?:并发|在线|同时|核心|可用性|成功率|内存|存储|容量|带宽|延迟|响应|吞吐|支持|达到|约为|大约|约|大概)?\s*"
+    r"(核|核数|CPU|GB|G|TB|T|MB|M|年|月|日|天|小时|分钟|秒|ms|s|人|用户|个|%|百分之|万元|元|次|QPS|TPS|套)",
+    re.IGNORECASE,
+)
 
 
 def _has_7x24(text: str) -> bool:
@@ -76,37 +138,138 @@ def _has_7x24(text: str) -> bool:
     return bool(re.search(r"\d+\s*[×xX]\s*24\s*小时", text))
 
 
-def _detect_time_direction(req_text: str, match_start: int) -> str:
-    """根据时间值前的约束关键词，判断该时间值的比较方向。"""
+def _strip_7x24(text: str) -> str:
+    """移除 7×24 小时相关文本，避免普通时间提取重复处理。"""
+    return re.sub(r"\d+\s*[×xX]\s*24\s*小时", "", text)
+
+
+def _detect_direction(req_text: str, match_start: int, unit: str | None = None) -> str | None:
+    """根据阈值方向词判断比较方向；无明确方向时按单位元数据返回默认方向。"""
     prefix = req_text[:match_start]
     best_pos = -1
-    best_dir = "ge"  # 默认按不少于处理
+    best_dir: str | None = None
     for kw, (op, _) in THRESHOLD_KEYWORDS.items():
         pos = prefix.rfind(kw)
         if pos > best_pos:
             best_pos = pos
             best_dir = op
-    return best_dir
+    if best_dir is not None:
+        return best_dir
+    if unit:
+        meta = UNIT_METAS.get(unit.lower())
+        if meta is not None:
+            return meta.default_direction
+    return None
 
 
-def _extract_time_values(text: str) -> List[Tuple[float, str, str, int]]:
-    """
-    提取文本中所有时间值。
-    返回 [(数值, 单位, 方向, 起始位置), ...]。
-    """
-    pattern = re.compile(r"(\d+(?:\.\d+)?)\s*(年|个月|月|天|日|小时|h)")
-    results = []
+def _extract_quantities(
+    text: str,
+    pattern: re.Pattern,
+    category: str | None = None,
+) -> List[Quantity]:
+    """按正则提取 Quantity 列表；category 用于过滤单位类别。"""
+    results: List[Quantity] = []
     for match in pattern.finditer(text):
         val = float(match.group(1))
         unit = match.group(2)
-        direction = _detect_time_direction(text, match.start())
-        results.append((val, unit, direction, match.start()))
+        unit_lower = unit.lower()
+        meta = UNIT_METAS.get(unit_lower)
+        if category is not None and (meta is None or meta.category != category):
+            continue
+        direction = _detect_direction(text, match.start(), unit_lower)
+        if direction is None:
+            continue
+        results.append(Quantity(val, unit, direction, match.start(), meta))
     return results
 
 
-def _strip_7x24(text: str) -> str:
-    """移除 7×24 小时相关文本，避免普通时间提取重复处理。"""
-    return re.sub(r"\d+\s*[×xX]\s*24\s*小时", "", text)
+def _extract_time_quantities(text: str) -> List[Quantity]:
+    """提取文本中所有时间量值。"""
+    return _extract_quantities(text, _TIME_PATTERN, category="time")
+
+
+def _extract_number_quantities(text: str) -> List[Quantity]:
+    """提取文本中所有非时间类数值量值。"""
+    return _extract_quantities(text, _NUMBER_PATTERN, category="metric")
+
+
+def compare_quantity(req_qty: Quantity, bid_qty: Quantity) -> Tuple[bool, str | None, str | None]:
+    """
+    比较需求 Quantity 与投标 Quantity 是否满足方向要求。
+    返回 (是否通过, 不一致消息, 投标中需标红的片段)。
+    """
+    req_val = req_qty.normalized_value
+    bid_val = bid_qty.normalized_value
+
+    if req_qty.direction in ("ge", "gt"):
+        passed = bid_val >= req_val if req_qty.direction == "ge" else bid_val > req_val
+    elif req_qty.direction in ("le", "lt"):
+        passed = bid_val <= req_val if req_qty.direction == "le" else bid_val < req_val
+    else:
+        return True, None, None
+
+    if passed:
+        return True, None, None
+
+    # 时间类单位：沿用原有消息格式，始终显示单位
+    if req_qty.is_time:
+        if req_qty.direction in ("ge", "gt"):
+            message = f"要求不少于 {req_qty.value}{req_qty.unit}，投标仅 {bid_qty.value}{bid_qty.unit}"
+        else:
+            message = f"要求不超过 {req_qty.value}{req_qty.unit}，投标为 {bid_qty.value}{bid_qty.unit}"
+        span = f"{bid_qty.value:g}{bid_qty.unit}"
+        return False, message, span
+
+    # 非时间类单位：当投标单位与需求单位不一致（兜底匹配）时不显示单位，保持与原 _record_number_mismatch 一致
+    show_unit = bid_qty.unit == req_qty.unit and bool(req_qty.unit)
+    unit_text = req_qty.unit if show_unit else ""
+    if req_qty.direction in ("ge", "gt"):
+        message = f"要求 ≥ {req_qty.value}{unit_text}，投标为 {bid_qty.value}{unit_text}"
+    else:
+        message = f"要求 ≤ {req_qty.value}{unit_text}，投标为 {bid_qty.value}{unit_text}"
+    span = f"{bid_qty.value:g}{unit_text}"
+    return False, message, span
+
+
+def _match_and_compare_quantities(
+    req_quantities: List[Quantity],
+    bid_quantities: List[Quantity],
+) -> Tuple[List[str], List[str]]:
+    """将需求量值与投标量值按单位优先匹配并比较，返回消息与标红片段列表。"""
+    messages: List[str] = []
+    spans: List[str] = []
+    used_bid: set[int] = set()
+
+    for req_qty in req_quantities:
+        # 优先匹配同单位、未使用的投标量值
+        matches = [
+            (j, bq)
+            for j, bq in enumerate(bid_quantities)
+            if bq.unit == req_qty.unit and j not in used_bid
+        ]
+        bid_qty: Quantity | None = None
+        if matches:
+            j, bid_qty = matches[0]
+            used_bid.add(j)
+        else:
+            available = [j for j in range(len(bid_quantities)) if j not in used_bid]
+            if available:
+                j = available[0]
+                raw_bq = bid_quantities[j]
+                used_bid.add(j)
+                # 兜底匹配：将投标单位置空，触发 compare_quantity 不显示单位的逻辑
+                bid_qty = Quantity(raw_bq.value, "", raw_bq.direction, raw_bq.position, raw_bq.meta)
+
+        if bid_qty is None:
+            continue
+
+        passed, message, span = compare_quantity(req_qty, bid_qty)
+        if not passed and message:
+            messages.append(message)
+            if span:
+                spans.append(span)
+
+    return messages, spans
 
 
 def _compare_time(req_text: str, bid_text: str) -> Tuple[List[str], List[str]]:
@@ -120,142 +283,32 @@ def _compare_time(req_text: str, bid_text: str) -> Tuple[List[str], List[str]]:
     ):
         messages.append("要求提供 7×24 小时技术支持服务，投标未明确承诺全天候服务")
 
-    req_times = _extract_time_values(_strip_7x24(req_text))
+    req_times = _extract_time_quantities(_strip_7x24(req_text))
     if not req_times:
         return messages, spans
 
-    bid_times = _extract_time_values(_strip_7x24(bid_text))
+    bid_times = _extract_time_quantities(_strip_7x24(bid_text))
     if not bid_times:
         messages.append("投标未明确响应时间要求")
         return messages, spans
 
-    def _record_mismatch(req_val: float, req_unit: str, req_days: float, bid_val: float, bid_unit: str, bid_days: float, direction: str) -> None:
-        if direction in ("ge", "gt") and bid_days < req_days:
-            messages.append(f"要求不少于 {req_val}{req_unit}，投标仅 {bid_val}{bid_unit}")
-        elif direction in ("le", "lt") and bid_days > req_days:
-            messages.append(f"要求不超过 {req_val}{req_unit}，投标为 {bid_val}{bid_unit}")
-        else:
-            return
-        spans.append(f"{bid_val:g}{bid_unit}")
-
-    # 为每个需求时间值找同单位的投标时间值
-    used_bid: set[int] = set()
-    for req_val, req_unit, direction, _ in req_times:
-        req_days = req_val * TIME_UNITS.get(req_unit, 1)
-        matches = [
-            (j, bv, bu, bd)
-            for j, (bv, bu, bd, _) in enumerate(bid_times)
-            if bu == req_unit and j not in used_bid
-        ]
-        if matches:
-            j, bid_val, bid_unit, _ = matches[0]
-            used_bid.add(j)
-            bid_days = bid_val * TIME_UNITS.get(bid_unit, 1)
-            _record_mismatch(req_val, req_unit, req_days, bid_val, bid_unit, bid_days, direction)
-        else:
-            # 尝试用未使用的第一个投标时间值兜底比较
-            available = [j for j in range(len(bid_times)) if j not in used_bid]
-            if available:
-                j = available[0]
-                bid_val, bid_unit, _, _ = bid_times[j]
-                used_bid.add(j)
-                bid_days = bid_val * TIME_UNITS.get(bid_unit, 1)
-                _record_mismatch(req_val, req_unit, req_days, bid_val, bid_unit, bid_days, direction)
-
+    msgs, spns = _match_and_compare_quantities(req_times, bid_times)
+    messages.extend(msgs)
+    spans.extend(spns)
     return messages, spans
 
 
-def _extract_simple_numbers(text: str) -> List[float]:
-    return [float(x) for x in re.findall(r"\d+(?:\.\d+)?", text)]
-
-
-def _detect_number_direction(req_text: str, match_start: int, req_unit: str) -> str | None:
-    """根据数值前的约束关键词判断比较方向；无明确方向时按单位类型给出默认方向。"""
-    prefix = req_text[:match_start]
-    best_pos = -1
-    best_dir = None
-    for kw, (op, _) in THRESHOLD_KEYWORDS.items():
-        pos = prefix.rfind(kw)
-        if pos > best_pos:
-            best_pos = pos
-            best_dir = op
-    if best_dir is not None:
-        return best_dir
-    if req_unit.lower() in DEFAULT_GE_UNITS:
-        return "ge"
-    return None
-
-
-def _record_number_mismatch(
-    req_num: float,
-    req_unit: str,
-    bid_num: float,
-    bid_unit: str | None,
-    direction: str,
-    messages: List[str],
-    spans: List[str],
-) -> None:
-    unit_text = req_unit if bid_unit is not None else ""
-    if direction in ("ge", "gt") and bid_num < req_num:
-        messages.append(f"要求 ≥ {req_num}{unit_text}，投标为 {bid_num}{unit_text}")
-    elif direction in ("le", "lt") and bid_num > req_num:
-        messages.append(f"要求 ≤ {req_num}{unit_text}，投标为 {bid_num}{unit_text}")
-    else:
-        return
-    spans.append(f"{bid_num:g}{unit_text}")
-
-
 def _compare_numbers(req_text: str, bid_text: str) -> Tuple[Optional[str], List[str]]:
-    # 提取带位置信息的数字+单位，用于逐个数判断方向
-    req_pattern = re.compile(
-        r"(\d+(?:\.\d+)?)\s*(核|核数|CPU|GB|G|TB|T|MB|M|年|月|日|天|小时|分钟|秒|ms|s|人|个|%|百分之|万元|元|次|QPS|TPS|套)"
-    )
-    bid_pattern = re.compile(
-        r"(\d+(?:\.\d+)?)\s*(核|核数|CPU|GB|G|TB|T|MB|M|年|月|日|天|小时|分钟|秒|ms|s|人|个|%|百分之|万元|元|次|QPS|TPS|套)"
-    )
+    """比较需求与投标中的非时间数值，返回不一致消息与标红片段列表。"""
+    req_nums = _extract_number_quantities(req_text)
+    if not req_nums:
+        return None, []
 
-    req_matches = list(req_pattern.finditer(req_text))
-    bid_matches = list(bid_pattern.finditer(bid_text))
+    bid_nums = _extract_number_quantities(bid_text)
+    if not bid_nums:
+        return "投标未明确响应数值要求", []
 
-    # 为兼容语义匹配层，仍复用 _extract_numbers 返回的 (num, unit) 列表
-    req_pairs = _extract_numbers(req_text)
-    bid_pairs = _extract_numbers(bid_text)
-
-    spans: List[str] = []
-    if not req_pairs:
-        return None, spans
-    if not bid_pairs:
-        return "投标未明确响应数值要求", spans
-
-    messages: List[str] = []
-    used_bid: set[int] = set()
-
-    for req_idx, (req_num, req_unit) in enumerate(req_pairs):
-        req_match = req_matches[req_idx] if req_idx < len(req_matches) else None
-        match_start = req_match.start() if req_match else 0
-        direction = _detect_number_direction(req_text, match_start, req_unit)
-        if direction is None:
-            continue
-
-        # 优先找同单位的投标数值
-        matches = [
-            (j, bn, bu)
-            for j, (bn, bu) in enumerate(bid_pairs)
-            if bu.lower() == req_unit.lower() and j not in used_bid
-        ]
-        if matches:
-            j, bid_num, _ = matches[0]
-            used_bid.add(j)
-            _record_number_mismatch(req_num, req_unit, bid_num, req_unit, direction, messages, spans)
-        else:
-            # 无同单位，按顺序使用未使用的投标数字兜底比较
-            available = [j for j in range(len(bid_pairs)) if j not in used_bid]
-            if available:
-                j = available[0]
-                bid_num, _ = bid_pairs[j]
-                used_bid.add(j)
-                _record_number_mismatch(req_num, req_unit, bid_num, None, direction, messages, spans)
-
+    messages, spans = _match_and_compare_quantities(req_nums, bid_nums)
     if messages:
         return "；".join(messages), spans
     return None, spans
@@ -333,11 +386,12 @@ def check_consistency(
         if result.match_type in ("exact", "keyword"):
             time_messages, time_spans = _compare_time(req_body, bid_text)
             for msg_idx, time_msg in enumerate(time_messages):
+                highlight_spans = [time_spans[msg_idx]] if msg_idx < len(time_spans) else []
                 issues.append(_make_issue(
                     idx, f"TIME-{msg_idx}", IssueType.TIME_MISMATCH, IssueLevel.WARNING,
                     req, bid_text, time_msg,
                     "核对并调整投标中的时间/期限表述，确保满足需求要求。",
-                    [best_block], candidate_bid_texts, highlight_spans=[time_spans[msg_idx]] if msg_idx < len(time_spans) else [],
+                    [best_block], candidate_bid_texts, highlight_spans=highlight_spans,
                 ))
 
             # 若已报时间不一致，跳过数值型参数检查，避免重复
@@ -356,7 +410,7 @@ def check_consistency(
                     idx, "SEM", IssueType.SEMANTIC_LOW, IssueLevel.WARNING,
                     req, bid_text, f"投标中疑似未充分响应该需求（匹配度 {best_score:.2f}）",
                     "检查投标文件中是否有明确回应，必要时补充内容。",
-                    [best_block], candidate_bid_texts, highlight_spans=[bid_text],
+                    [best_block], candidate_bid_texts, highlight_spans=[],
                 ))
 
     return issues

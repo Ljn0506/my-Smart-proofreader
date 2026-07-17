@@ -30,6 +30,7 @@ class TextBlock:
     style_name: str = ""
     page_hint: int = 0  # 页码提示（docx 本身无精确页码，这里按近似估算）
     index: int = 0  # 在文档中的顺序
+    section_title: str = ""  # 所属章节/产品标题（用于匹配）
 
 
 @dataclass
@@ -126,7 +127,7 @@ def convert_doc_to_docx(doc_path: Path, output_dir: Path) -> Path:
         str(doc_path),
     ]
     try:
-        result = subprocess.run(
+        subprocess.run(
             cmd,
             check=True,
             stdout=subprocess.PIPE,

@@ -6,7 +6,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from proofreader.exporters import export_batch_to_excel, export_to_excel
-from proofreader.pipeline import ProofreadBatchResult, ProofreadResult
+from proofreader.pipeline import ProofreadResult
 
 
 def test_export_to_excel_creates_file(sample_result: ProofreadResult) -> None:

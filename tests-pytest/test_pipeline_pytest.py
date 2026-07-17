@@ -35,8 +35,14 @@ def test_typo_issues_found(result: ProofreadResult) -> None:
     assert any(typo.word == "架购" for typo in result.typo_issues)
 
 
-def test_ocr_issues_found(result: ProofreadResult) -> None:
+def test_ocr_issues_found(sample_docs_dir: Path) -> None:
     """应检出至少 1 处截图 OCR 问题。"""
+    # 使用全新 Proofreader 实例，避免会话级 fixture 的 OCR 缓存影响本次断言
+    proofreader = Proofreader()
+    result = proofreader.proofread(
+        sample_docs_dir / "requirements.docx",
+        sample_docs_dir / "bid.docx",
+    )
     assert len(result.ocr_issues) >= 1
 
 

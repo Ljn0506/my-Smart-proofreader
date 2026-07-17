@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import List, Tuple
+from functools import lru_cache
+from typing import Any, List, Tuple
 
 import jieba
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -16,8 +17,9 @@ from proofreader.parsers.docx_parser import TextBlock
 
 # 数字+单位正则
 # 允许数字与单位之间有少量修饰词（如"1000 并发用户"、"99.9%"）
+# 加上 (?<![A-Za-z]) 避免把版本号（如 Oracle11g、Windows2003）当成技术参数
 NUMBER_UNIT_PATTERN = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(?:并发|在线|同时|核心|可用性|成功率|内存|存储|容量|带宽|延迟|响应|吞吐|支持|达到|约为|大约|约|大概)?\s*"
+    r"(?<![A-Za-z])(\d+(?:\.\d+)?)\s*(?:并发|在线|同时|核心|可用性|成功率|内存|存储|容量|带宽|延迟|响应|吞吐|支持|达到|约为|大约|约|大概)?\s*"
     r"(核|核数|CPU|GB|G|TB|T|MB|M|年|月|日|天|小时|分钟|秒|ms|s|人|用户|个|%|百分之|万元|元|次|QPS|TPS|套)",
     re.IGNORECASE,
 )
@@ -73,7 +75,8 @@ STOPWORDS = set([
 ])
 
 
-def _segment(text: str) -> set[str]:
+@lru_cache(maxsize=1024)
+def _segment(text: str) -> frozenset[str]:
     """用 jieba 分词，并过滤停用词和过短词。"""
     words = set()
     for w in jieba.lcut(text.lower()):
@@ -82,10 +85,11 @@ def _segment(text: str) -> set[str]:
             words.add(w)
         elif w.isdigit():
             words.add(w)
-    return words
+    return frozenset(words)
 
 
-def _jieba_tokenize(text: str) -> List[str]:
+@lru_cache(maxsize=1024)
+def _jieba_tokenize(text: str) -> tuple[str, ...]:
     """供 TfidfVectorizer 使用的中文分词器。"""
     tokens: List[str] = []
     for w in jieba.lcut(text.lower()):
@@ -94,7 +98,7 @@ def _jieba_tokenize(text: str) -> List[str]:
             continue
         if w.isdigit() or (len(w) >= 2 and w not in STOPWORDS):
             tokens.append(w)
-    return tokens
+    return tuple(tokens)
 
 
 def _keyword_overlap(req_text: str, bid_text: str) -> float:
@@ -120,51 +124,74 @@ def _time_unit_bonus(req_text: str, bid_text: str) -> float:
     return 0.0
 
 
+_TIME_UNITS = {"年", "个月", "月", "天", "日", "小时", "h"}
+
+
 def _strict_match(req_item: RequirementItem, bid_text: str) -> bool:
-    """严格匹配：核心数字和单位匹配，或内容关键词高度重叠。"""
+    """严格匹配：核心数字和单位匹配，且内容关键词必须有实质重叠，避免纯数字巧合命中。"""
     req_numbers = _extract_numbers(req_item.text)
     bid_numbers = _extract_numbers(bid_text)
 
-    # 单位匹配：需求中的数字单位在投标中出现（数字可不同，留给后续偏差检查）
+    keyword_overlap = _keyword_overlap(req_item.text, bid_text)
+
+    # 时间类单位匹配：需求与投标都出现相同时间单位（如 年/月/天），放宽关键词门槛
+    if req_numbers and bid_numbers:
+        req_time_units = {u.lower() for _, u in req_numbers if u.lower() in _TIME_UNITS}
+        bid_time_units = {u.lower() for _, u in bid_numbers if u.lower() in _TIME_UNITS}
+        if req_time_units & bid_time_units and keyword_overlap > 0.05:
+            return True
+
+    # 单位匹配：需求中的数字单位在投标中出现，但要求内容关键词有足够重叠
     if req_numbers and bid_numbers:
         req_units = set(u.lower() for _, u in req_numbers)
         bid_units = set(u.lower() for _, u in bid_numbers)
-        if req_units & bid_units and _keyword_overlap(req_item.text, bid_text) > 0.05:
+        if req_units & bid_units and keyword_overlap > 0.15:
             return True
 
     # 数值完全匹配
     if req_numbers and bid_numbers:
         req_set = set((round(n, 2), u.lower()) for n, u in req_numbers)
         bid_set = set((round(n, 2), u.lower()) for n, u in bid_numbers)
-        if req_set & bid_set and _keyword_overlap(req_item.text, bid_text) > 0.1:
+        if req_set & bid_set and keyword_overlap > 0.2:
             return True
 
     # 没有数字的需求，要求较高的内容关键词重叠
-    overlap = _keyword_overlap(req_item.text, bid_text)
-    return overlap >= 0.3
+    return keyword_overlap >= 0.3
 
 
-def match_requirements_to_bid(
+def _section_compatible(req: RequirementItem, block: TextBlock) -> bool:
+    """判断需求条目与投标 block 是否属于同一章节/产品。"""
+    if not req.section_title or not block.section_title:
+        return True
+    r = req.section_title.lower()
+    b = block.section_title.lower()
+    return r in b or b in r
+
+
+@lru_cache(maxsize=64)
+def _get_bid_vectors(
+    bid_texts: tuple[str, ...],
+) -> tuple[TfidfVectorizer, Any]:
+    """获取投标文本的 TF-IDF 向量；使用 LRU 缓存避免重复 fit_transform。"""
+    vectorizer = TfidfVectorizer(tokenizer=_jieba_tokenize, token_pattern=None)
+    try:
+        bid_vectors = vectorizer.fit_transform(list(bid_texts))
+    except ValueError:
+        # 文本为空或无法向量化：返回空向量占位
+        bid_vectors = vectorizer.fit_transform([])
+
+    return vectorizer, bid_vectors
+
+
+def _match_with_vectors(
     requirements: List[RequirementItem],
-    bid_sections: List[BidSection],
-    section_type: BidSectionType | None = None,
+    bid_blocks: List[TextBlock],
+    bid_texts: List[str],
+    vectorizer: TfidfVectorizer,
+    bid_vectors: Any,
 ) -> List[MatchResult]:
-    """
-    将需求条目与投标文件段落匹配。
-    如果指定 section_type，则只在该部分匹配；否则匹配全部。
-    """
-    # 收集待匹配的投标文本块（排除标题）
-    if section_type:
-        bid_blocks = []
-        for sec in bid_sections:
-            if sec.section_type == section_type:
-                bid_blocks.extend([b for b in sec.blocks if b.block_type != "heading"])
-    else:
-        bid_blocks = [b for sec in bid_sections for b in sec.blocks if b.block_type != "heading"]
-
-    bid_texts = [b.text for b in bid_blocks]
+    """使用已预计算的投标向量完成需求-投标匹配。"""
     req_texts = [r.text for r in requirements]
-
     results: List[MatchResult] = []
 
     if not bid_blocks or not requirements:
@@ -172,13 +199,8 @@ def match_requirements_to_bid(
             results.append(MatchResult(req, [], 0.0, "none"))
         return results
 
-    # TF-IDF 向量（使用 jieba 中文分词）
-    vectorizer = TfidfVectorizer(tokenizer=_jieba_tokenize, token_pattern=None)
     try:
-        all_texts = req_texts + bid_texts
-        tfidf_matrix = vectorizer.fit_transform(all_texts)
-        req_vectors = tfidf_matrix[: len(req_texts)]
-        bid_vectors = tfidf_matrix[len(req_texts):]
+        req_vectors = vectorizer.transform(req_texts)
         sim_matrix = cosine_similarity(req_vectors, bid_vectors)
     except ValueError:
         # 文本为空或无法向量化
@@ -187,13 +209,19 @@ def match_requirements_to_bid(
         return results
 
     for i, req in enumerate(requirements):
+        # 优先只和同一章节/产品的投标段落匹配
+        compatible_indices = [
+            j for j, block in enumerate(bid_blocks) if _section_compatible(req, block)
+        ] or list(range(len(bid_blocks)))
+
         # 严格匹配
         strict_hits: List[Tuple[TextBlock, float]] = []
         keyword_hits: List[Tuple[TextBlock, float]] = []
         semantic_hits: List[Tuple[TextBlock, float]] = []
 
         block_scores = []
-        for j, block in enumerate(bid_blocks):
+        for j in compatible_indices:
+            block = bid_blocks[j]
             bid_text = block.text
             semantic_score = float(sim_matrix[i, j])
             keyword_score = _keyword_overlap(req.text, bid_text)
@@ -239,3 +267,31 @@ def match_requirements_to_bid(
         )
 
     return results
+
+
+def match_requirements_to_bid(
+    requirements: List[RequirementItem],
+    bid_sections: List[BidSection],
+    section_type: BidSectionType | None = None,
+) -> List[MatchResult]:
+    """
+    将需求条目与投标文件段落匹配。
+    如果指定 section_type，则只在该部分匹配；否则匹配全部。
+    """
+    # 收集待匹配的投标文本块（排除标题）
+    if section_type:
+        bid_blocks = []
+        for sec in bid_sections:
+            if sec.section_type == section_type:
+                bid_blocks.extend([b for b in sec.blocks if b.block_type != "heading"])
+    else:
+        bid_blocks = [b for sec in bid_sections for b in sec.blocks if b.block_type != "heading"]
+
+    bid_texts = [b.text for b in bid_blocks]
+    vectorizer, bid_vectors = _get_bid_vectors(tuple(bid_texts))
+
+    # 处理空投标向量（无法向量化时返回兜底结果）
+    if bid_vectors.shape[0] == 0:
+        return [MatchResult(req, [], 0.0, "none") for req in requirements]
+
+    return _match_with_vectors(requirements, bid_blocks, bid_texts, vectorizer, bid_vectors)
