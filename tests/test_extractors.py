@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from proofreader.extractors.base import BaseExtractor
 from proofreader.extractors.composite_extractor import CompositeExtractor
+from proofreader.extractors.numbered_paragraph_extractor import NumberedParagraphExtractor
 from proofreader.models.requirements import ConstraintType, RequirementCategory, RequirementItem
-from proofreader.parsers.docx_parser import DocumentSection, DocumentSectionType, ParsedDocument
+from proofreader.parsers.docx_parser import DocumentSection, DocumentSectionType, ParagraphType, ParsedDocument, TextBlock
 
 
 class DummyExtractor(BaseExtractor):
@@ -40,3 +41,25 @@ def test_composite_extractor_deduplicates_by_id():
     items = extractor.extract(doc)
     assert len(items) == 2
     assert {item.id for item in items} == {"DUP-1", "DUP-2"}
+
+
+def test_numbered_paragraph_extractor():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "需求",
+        1,
+        0,
+        10,
+        ["需求"],
+        paragraphs=[
+            TextBlock("1. 服务期限：合同签订起12个月。", "paragraph", paragraph_type=ParagraphType.NUMBERED_REQUIREMENT, index=0),
+            TextBlock("详见招标文件", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=1),
+        ],
+        tables=[],
+    )
+    extractor = NumberedParagraphExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) == 1
+    assert "12个月" in items[0].raw_text
+    assert items[0].category == RequirementCategory.DELIVERY
+    assert items[0].constraint_type == ConstraintType.MANDATORY
