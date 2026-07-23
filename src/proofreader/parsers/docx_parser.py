@@ -5,12 +5,53 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from docx import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
+
+
+class DocumentSectionType(str, Enum):
+    TENDER_NOTICE = "tender_notice"
+    BIDDER_INSTRUCTIONS = "bidder_instructions"
+    REQUIREMENTS = "requirements"
+    EVALUATION = "evaluation"
+    CONTRACT = "contract"
+    BID_TEMPLATE = "bid_template"
+    UNKNOWN = "unknown"
+
+
+class DocumentType(str, Enum):
+    TENDER = "tender_document"
+    REQUIREMENT = "requirement_document"
+    BID = "bid_document"
+
+
+class ParagraphType(str, Enum):
+    HEADING = "heading"
+    NUMBERED_REQUIREMENT = "numbered_requirement"
+    PLAIN_TEXT = "plain_text"
+    METADATA = "metadata"
+    NOTICE = "notice"
+
+
+class ParsedTable:
+    def __init__(
+        self,
+        table_type: str,
+        header: List[str],
+        rows: List[List[str]],
+        caption: Optional[str] = None,
+        index: int = 0,
+    ):
+        self.table_type = table_type
+        self.header = header
+        self.rows = rows
+        self.caption = caption
+        self.index = index
 
 
 # WordprocessingML / DrawingML 命名空间
@@ -29,8 +70,49 @@ class TextBlock:
     level: int = 0  # 标题层级，0 表示非标题
     style_name: str = ""
     page_hint: int = 0  # 页码提示（docx 本身无精确页码，这里按近似估算）
-    index: int = 0  # 在文档中的顺序
+    index: int = 0  # 在文档中的顺序（段落 + 表格行）
     section_title: str = ""  # 所属章节/产品标题（用于匹配）
+    para_index: int | None = None  # 在 Document.paragraphs / body <w:p> 中的下标；
+    # 表格行为 None
+
+
+class DocumentSection:
+    def __init__(
+        self,
+        section_type: DocumentSectionType,
+        title: Optional[str],
+        level: int,
+        start_index: int,
+        end_index: int,
+        headings: List[str],
+        paragraphs: List[TextBlock],
+        tables: List[ParsedTable],
+    ):
+        self.section_type = section_type
+        self.title = title
+        self.level = level
+        self.start_index = start_index
+        self.end_index = end_index
+        self.headings = headings
+        self.paragraphs = paragraphs
+        self.tables = tables
+
+
+def infer_section_type(text: str) -> DocumentSectionType:
+    t = text.strip().lower()
+    if any(k in t for k in ["招标公告", "比选邀请函", "遴选邀请函", "邀请函"]):
+        return DocumentSectionType.TENDER_NOTICE
+    if any(k in t for k in ["供应商须知", "投标人须知", "响应供应商须知"]):
+        return DocumentSectionType.BIDDER_INSTRUCTIONS
+    if any(k in t for k in ["采购需求", "用户需求书", "需求内容", "技术/商务要求", "商务要求", "技术要求"]):
+        return DocumentSectionType.REQUIREMENTS
+    if any(k in t for k in ["评审", "评标", "评分标准", "资格审查"]):
+        return DocumentSectionType.EVALUATION
+    if any(k in t for k in ["合同文本", "合同条款", "合同样本", "付款方式"]):
+        return DocumentSectionType.CONTRACT
+    if any(k in t for k in ["投标文件格式", "响应文件格式", "自查表", "报价表"]):
+        return DocumentSectionType.BID_TEMPLATE
+    return DocumentSectionType.UNKNOWN
 
 
 @dataclass
@@ -160,7 +242,7 @@ def _parse_docx_document(doc_path: Path, original_path: Path) -> ParsedDocument:
 
     parsed = ParsedDocument(path=original_path)
     block_index = 0
-    para_index = 0
+    body_para_index = 0  # 仅统计 body 下 <w:p> 的顺序，与 Document.paragraphs 对齐
     # 记录每个顶层段落元素对应的文本块序号，用于后续图片定位
     para_element_to_block_index: Dict[object, int] = {}
 
@@ -170,9 +252,9 @@ def _parse_docx_document(doc_path: Path, original_path: Path) -> ParsedDocument:
             is_heading, level = _is_heading(paragraph)
             text = paragraph.text.strip()
             if not text:
-                # 空段落也可能包含图片，归到前一个文本块
+                # 空段落也可能包含图片，归到前一个文本块；仍递增 body_para_index 以保持对齐
                 para_element_to_block_index[element] = max(0, block_index - 1)
-                para_index += 1
+                body_para_index += 1
                 continue
             # 先记录段落所在块序号
             para_element_to_block_index[element] = block_index
@@ -183,12 +265,13 @@ def _parse_docx_document(doc_path: Path, original_path: Path) -> ParsedDocument:
                 level=level,
                 style_name=paragraph.style.name if paragraph.style else "",
                 index=block_index,
+                para_index=body_para_index,
             )
             parsed.blocks.append(block)
             if is_heading:
                 parsed.headings.append(block)
             block_index += 1
-            para_index += 1
+            body_para_index += 1
 
         elif element.tag.endswith("tbl"):
             table = Table(element, doc)
@@ -203,6 +286,7 @@ def _parse_docx_document(doc_path: Path, original_path: Path) -> ParsedDocument:
                     level=0,
                     style_name="Table",
                     index=block_index,
+                    # 表格行无对应 body paragraph 下标
                 )
                 parsed.blocks.append(block)
                 block_index += 1
