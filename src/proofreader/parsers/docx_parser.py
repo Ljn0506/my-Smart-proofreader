@@ -1,6 +1,7 @@
 """解析 Word .docx / .doc 文件，提取段落、标题、表格和图片位置。"""
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -36,6 +37,47 @@ class ParagraphType(str, Enum):
     PLAIN_TEXT = "plain_text"
     METADATA = "metadata"
     NOTICE = "notice"
+
+
+_NUMBERED_RE = re.compile(
+    r"^(?:\d+[、．.]\s*|\(\d+\)\s*|[①②③④⑤⑥⑦⑧⑨⑩]\s*|[a-zA-Z][．.]\s*)"
+)
+
+
+def infer_heading_level(text: str) -> int:
+    t = text.strip()
+    if re.match(r"^第[一二三四五六七八九十]+章", t):
+        return 1
+    if re.match(r"^[一二三四五六七八九十]+[、．.]", t):
+        return 1
+    if re.match(r"^\d+[\.．]\d+[\.．]\d+[\.．]\d+", t):
+        return 4
+    if re.match(r"^\d+[\.．]\d+[\.．]\d+", t):
+        return 3
+    if re.match(r"^\d+[\.．]\d+", t):
+        return 2
+    if re.match(r"^\(\d+\)", t):
+        return 3
+    if re.match(r"^[①②③④⑤⑥⑦⑧⑨⑩]", t):
+        return 4
+    if re.match(r"^[a-zA-Z][\.．]\s*\S", t):
+        return 4
+    return 0
+
+
+def classify_paragraph(text: str) -> ParagraphType:
+    t = text.strip()
+    if not t:
+        return ParagraphType.PLAIN_TEXT
+    if infer_heading_level(t) > 0:
+        return ParagraphType.HEADING
+    if _NUMBERED_RE.match(t):
+        return ParagraphType.NUMBERED_REQUIREMENT
+    if re.match(r"^(项目编号|预算金额|发布日期|采购人|联系人)", t):
+        return ParagraphType.METADATA
+    if any(k in t for k in ["说明", "注：", "注意", "警告"]):
+        return ParagraphType.NOTICE
+    return ParagraphType.PLAIN_TEXT
 
 
 class ParsedTable:
@@ -74,6 +116,7 @@ class TextBlock:
     section_title: str = ""  # 所属章节/产品标题（用于匹配）
     para_index: int | None = None  # 在 Document.paragraphs / body <w:p> 中的下标；
     # 表格行为 None
+    paragraph_type: ParagraphType = ParagraphType.PLAIN_TEXT
 
 
 class DocumentSection:
