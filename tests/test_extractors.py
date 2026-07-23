@@ -4,8 +4,9 @@ from proofreader.extractors.base import BaseExtractor
 from proofreader.extractors.composite_extractor import CompositeExtractor
 from proofreader.extractors.heading_based_extractor import HeadingBasedExtractor
 from proofreader.extractors.numbered_paragraph_extractor import NumberedParagraphExtractor
+from proofreader.extractors.table_row_extractor import TableRowExtractor
 from proofreader.models.requirements import ConstraintType, RequirementCategory, RequirementItem
-from proofreader.parsers.docx_parser import DocumentSection, DocumentSectionType, ParagraphType, ParsedDocument, TextBlock
+from proofreader.parsers.docx_parser import DocumentSection, DocumentSectionType, ParagraphType, ParsedDocument, ParsedTable, TextBlock
 
 
 class DummyExtractor(BaseExtractor):
@@ -137,3 +138,28 @@ def test_heading_based_extractor_accepts_none_doc():
     items = extractor.extract_from_section(section, None)
     assert len(items) == 1
     assert items[0].source_doc == ""
+
+
+def test_table_row_extractor_technical_spec():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "技术指标",
+        2,
+        0,
+        10,
+        ["技术指标"],
+        paragraphs=[],
+        tables=[
+            ParsedTable(
+                table_type="technical_spec",
+                header=["指标项", "技术要求"],
+                rows=[["系统可用性", "不低于99.9%"]],
+                index=0,
+            )
+        ],
+    )
+    extractor = TableRowExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) == 1
+    assert items[0].category == RequirementCategory.TECHNICAL
+    assert "99.9%" in items[0].raw_text

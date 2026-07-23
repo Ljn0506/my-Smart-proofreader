@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
-from proofreader.extractors.base import BaseExtractor
+from proofreader.extractors.base import BaseExtractor, _heading_prefix
 from proofreader.models.requirements import (
     CheckMethod,
     ConstraintType,
@@ -49,5 +49,5 @@ class HeadingBasedExtractor(BaseExtractor):
         return items
 
     def _generate_id(self, section: DocumentSection) -> str:
-        prefix = self._heading_prefix(section)
+        prefix = _heading_prefix(section)
         return f"{prefix}-H{section.level:02d}"
