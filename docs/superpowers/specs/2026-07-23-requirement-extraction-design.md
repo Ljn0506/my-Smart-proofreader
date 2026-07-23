@@ -150,8 +150,8 @@ class DocumentSection(BaseModel):
     start_index: int
     end_index: int
     headings: list[str]
-    paragraphs: list[ParsedParagraph]
-    tables: list[ParsedTable]
+    paragraphs: list[TextBlock]   # 来自 proofreader.parsers.docx_parser
+    tables: list[ParsedTable]     # 结构化为 {type, header, rows}
 
 class ParsedDocument(BaseModel):
     path: Path
@@ -159,9 +159,9 @@ class ParsedDocument(BaseModel):
     title: str | None
     sections: list[DocumentSection]
     # 兼容旧接口
-    blocks: list[ParsedParagraph]
-    headings: list[ParsedHeading]
-    raw_tables: list[ParsedTable]
+    blocks: list[TextBlock]
+    headings: list[TextBlock]
+    raw_tables: list[list[list[str]]]
 ```
 
 ### 3.2 分区识别规则（第一阶段）
@@ -179,14 +179,16 @@ class ParsedDocument(BaseModel):
 
 ### 3.3 标题层级修正
 
-Heading 样式不可靠，需要结合编号模式重新推断层级：
+Heading 样式不可靠，需要结合编号模式重新推断层级（按优先级从高到低匹配）：
 
 - `第[一二三四五六七八九十]+章` → level 1
 - `[一二三四五六七八九十]+[、．.]` → level 1
-- `\d+[\.．]\s*\D` → level 2
-- `(\d+)` → level 3
-- `\d+[\.．]\d+` → level 3
-- 英文项目符号 a/b/c → level 4+
+- `\d+[\.．]\d+[\.．]\d+[\.．]\d+` → level 4
+- `\d+[\.．]\d+[\.．]\d+` → level 3
+- `\d+[\.．]\d+` → level 2
+- `\(\d+\)` → level 3
+- `[①②③④⑤⑥⑦⑧⑨⑩]` → level 4
+- 英文项目符号 `a/b/c` / `A/B/C` → level 4+
 
 同时处理 `★` / `▲` 标记：这些标记不影响层级，但会影响 `constraint_type`。
 
@@ -204,6 +206,13 @@ class ParagraphType(str, Enum):
 ### 3.5 表格分类
 
 ```python
+class ParsedTable(BaseModel):
+    table_type: TableType
+    header: list[str]
+    rows: list[list[str]]
+    caption: str | None = None
+    index: int
+
 class TableType(str, Enum):
     SERVICE_LIST = "service_list"
     TECHNICAL_SPEC = "technical_spec"
@@ -227,7 +236,9 @@ class TableType(str, Enum):
 ```python
 class BaseExtractor(ABC):
     @abstractmethod
-    def extract(self, doc: ParsedDocument) -> list[RequirementItem]: ...
+    def extract_from_section(
+        self, section: DocumentSection, doc: ParsedDocument
+    ) -> list[RequirementItem]: ...
 ```
 
 ### 4.2 子提取器
@@ -241,22 +252,26 @@ class NumberedParagraphExtractor(BaseExtractor):
 
 class TableRowExtractor(BaseExtractor):
     """从表格行提取需求条目，按表类型分发策略。"""
+
+    def extract_from_section(
+        self, section: DocumentSection, doc: ParsedDocument
+    ) -> list[RequirementItem]:
+        items: list[RequirementItem] = []
+        for table in section.tables:
+            strategy = self._choose_strategy(table.table_type)
+            items.extend(strategy.extract(table, section, doc))
+        return items
+
+    def _choose_strategy(self, table_type: TableType) -> TableStrategy: ...
 ```
 
 ### 4.3 表格行提取策略
-
-```python
-class TableRowExtractor(BaseExtractor):
-    def extract_from_table(self, table: ParsedTable, context: SectionContext) -> list[RequirementItem]:
-        strategy = self._choose_strategy(table.table_type)
-        return strategy.extract(table, context)
-```
 
 | 表类型 | 策略 | 输出 |
 |--------|------|------|
 | `TECHNICAL_SPEC` | 每行一个需求 | `category=TECHNICAL` |
 | `SERVICE_LIST` | 每行一个需求 | `category=TECHNICAL/DELIVERY` |
-| `EVALUATION` | 提取评分项 | `category=SCORING, constraint_type=SCORING` |
+| `EVALUATION` | 提取评分项（可选进入需求库） | `category=SCORING, constraint_type=SCORING` |
 | `CHECKLIST` | 每个检查项 | `category=QUALIFICATION/COMMERCIAL` |
 | `QUALIFICATION` | 每个资质项 | `category=QUALIFICATION` |
 | `PERFORMANCE` | 业绩要求 | `category=QUALIFICATION` |
