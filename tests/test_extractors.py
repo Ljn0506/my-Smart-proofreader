@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from proofreader.extractors.base import BaseExtractor
 from proofreader.extractors.composite_extractor import CompositeExtractor
+from proofreader.extractors.heading_based_extractor import HeadingBasedExtractor
 from proofreader.extractors.numbered_paragraph_extractor import NumberedParagraphExtractor
 from proofreader.models.requirements import ConstraintType, RequirementCategory, RequirementItem
 from proofreader.parsers.docx_parser import DocumentSection, DocumentSectionType, ParagraphType, ParsedDocument, TextBlock
@@ -63,3 +64,22 @@ def test_numbered_paragraph_extractor():
     assert "12个月" in items[0].raw_text
     assert items[0].category == RequirementCategory.DELIVERY
     assert items[0].constraint_type == ConstraintType.MANDATORY
+
+
+def test_heading_based_extractor():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "2.1 桌面运维服务",
+        2,
+        0,
+        10,
+        ["二、运维服务需求", "2.1 桌面运维服务"],
+        paragraphs=[
+            TextBlock("现需配备3名驻场人员。", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=0),
+        ],
+        tables=[],
+    )
+    extractor = HeadingBasedExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) >= 1
+    assert any("驻场人员" in item.raw_text for item in items)
