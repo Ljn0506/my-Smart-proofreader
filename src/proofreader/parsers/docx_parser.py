@@ -39,6 +39,18 @@ class ParagraphType(str, Enum):
     NOTICE = "notice"
 
 
+class TableType(str, Enum):
+    SERVICE_LIST = "service_list"
+    TECHNICAL_SPEC = "technical_spec"
+    EVALUATION = "evaluation"
+    CHECKLIST = "checklist"
+    PERFORMANCE = "performance"
+    PERSONNEL = "personnel"
+    QUOTATION = "quotation"
+    QUALIFICATION = "qualification"
+    UNKNOWN = "unknown"
+
+
 _NUMBERED_RE = re.compile(
     r"^(?:\d+[、．.]\s*|\(\d+\)\s*|[①②③④⑤⑥⑦⑧⑨⑩]\s*|[a-zA-Z][．.]\s*)"
 )
@@ -78,6 +90,27 @@ def classify_paragraph(text: str) -> ParagraphType:
     if any(k in t for k in ["说明", "注：", "注意", "警告"]):
         return ParagraphType.NOTICE
     return ParagraphType.PLAIN_TEXT
+
+
+def classify_table(header: List[str]) -> TableType:
+    h = " ".join(header).lower()
+    if any(k in h for k in ["指标项", "技术要求", "技术参数"]):
+        return TableType.TECHNICAL_SPEC
+    if any(k in h for k in ["服务项", "服务频率", "服务要求", "服务内容"]):
+        return TableType.SERVICE_LIST
+    if any(k in h for k in ["评审", "评分", "评价标准"]):
+        return TableType.EVALUATION
+    if any(k in h for k in ["自查", "审查项目", "资格性", "符合性"]):
+        return TableType.CHECKLIST
+    if any(k in h for k in ["业绩", "同类项目", "合同金额"]):
+        return TableType.PERFORMANCE
+    if any(k in h for k in ["人员", "姓名", "学历", "工作年限"]):
+        return TableType.PERSONNEL
+    if any(k in h for k in ["报价", "单价", "总价", "金额"]):
+        return TableType.QUOTATION
+    if any(k in h for k in ["资质", "资格", "认证"]):
+        return TableType.QUALIFICATION
+    return TableType.UNKNOWN
 
 
 class ParsedTable:
@@ -171,6 +204,9 @@ class EmbeddedImage:
 class ParsedDocument:
     """解析后的文档对象。"""
     path: Path
+    doc_type: DocumentType = DocumentType.TENDER
+    title: Optional[str] = None
+    sections: List[DocumentSection] = field(default_factory=list)
     blocks: List[TextBlock] = field(default_factory=list)
     images: List[EmbeddedImage] = field(default_factory=list)
     headings: List[TextBlock] = field(default_factory=list)
@@ -386,3 +422,88 @@ def parse_docx(path: Path | str) -> ParsedDocument:
             return _parse_docx_document(converted_path, original_path)
 
     return _parse_docx_document(path, original_path)
+
+
+def parse_docx_with_sections(path: Path | str) -> ParsedDocument:
+    """解析 Word 文件并按章节切分，保留段落类型与表格类型。"""
+    path = Path(path)
+    doc = Document(str(path))
+    sections: List[DocumentSection] = []
+    current_section = DocumentSection(
+        section_type=DocumentSectionType.UNKNOWN,
+        title=None,
+        level=0,
+        start_index=0,
+        end_index=0,
+        headings=[],
+        paragraphs=[],
+        tables=[],
+    )
+    paragraphs: List[TextBlock] = []
+    headings: List[TextBlock] = []
+    raw_tables: List[List[List[str]]] = []
+
+    para_index = 0
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        level = infer_heading_level(text)
+        ptype = ParagraphType.HEADING if level > 0 else classify_paragraph(text)
+        style_name = para.style.name if para.style else ""
+        block = TextBlock(
+            text=text,
+            block_type="heading" if level > 0 else "paragraph",
+            level=level,
+            style_name=style_name,
+            index=para_index,
+            para_index=para_index,
+            paragraph_type=ptype,
+        )
+        paragraphs.append(block)
+        if level > 0:
+            headings.append(block)
+            section_type = infer_section_type(text)
+            if section_type != DocumentSectionType.UNKNOWN:
+                current_section.end_index = para_index
+                sections.append(current_section)
+                current_section = DocumentSection(
+                    section_type=section_type,
+                    title=text,
+                    level=level,
+                    start_index=para_index,
+                    end_index=para_index,
+                    headings=[text],
+                    paragraphs=[],
+                    tables=[],
+                )
+            else:
+                current_section.headings.append(text)
+        else:
+            current_section.paragraphs.append(block)
+        para_index += 1
+
+    for idx, table in enumerate(doc.tables):
+        raw = _extract_raw_table(table)
+        raw_tables.append(raw)
+        if raw:
+            ptable = ParsedTable(
+                table_type=classify_table(raw[0]).value,
+                header=raw[0],
+                rows=raw[1:],
+                index=idx,
+            )
+            current_section.tables.append(ptable)
+
+    current_section.end_index = para_index
+    sections.append(current_section)
+
+    return ParsedDocument(
+        path=path,
+        doc_type=DocumentType.TENDER,
+        title=None,
+        sections=sections,
+        blocks=paragraphs,
+        headings=headings,
+        raw_tables=raw_tables,
+    )
