@@ -444,56 +444,61 @@ def parse_docx_with_sections(path: Path | str) -> ParsedDocument:
     raw_tables: List[List[List[str]]] = []
 
     para_index = 0
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if not text:
-            continue
-        level = infer_heading_level(text)
-        ptype = ParagraphType.HEADING if level > 0 else classify_paragraph(text)
-        style_name = para.style.name if para.style else ""
-        block = TextBlock(
-            text=text,
-            block_type="heading" if level > 0 else "paragraph",
-            level=level,
-            style_name=style_name,
-            index=para_index,
-            para_index=para_index,
-            paragraph_type=ptype,
-        )
-        paragraphs.append(block)
-        if level > 0:
-            headings.append(block)
-            section_type = infer_section_type(text)
-            if section_type != DocumentSectionType.UNKNOWN:
-                current_section.end_index = para_index
-                sections.append(current_section)
-                current_section = DocumentSection(
-                    section_type=section_type,
-                    title=text,
-                    level=level,
-                    start_index=para_index,
-                    end_index=para_index,
-                    headings=[text],
-                    paragraphs=[],
-                    tables=[],
-                )
-            else:
-                current_section.headings.append(text)
-        else:
-            current_section.paragraphs.append(block)
-        para_index += 1
-
-    for idx, table in enumerate(doc.tables):
-        raw = _extract_raw_table(table)
-        raw_tables.append(raw)
-        if raw:
-            ptable = ParsedTable(
-                table_type=classify_table(raw[0]).value,
-                header=raw[0],
-                rows=raw[1:],
-                index=idx,
+    table_index = 0
+    # 按文档 body 的真实顺序遍历段落和表格，确保表格被挂载到当前所在 section
+    for element in doc.element.body:
+        if element.tag.endswith("p"):
+            paragraph = Paragraph(element, doc)
+            text = paragraph.text.strip()
+            if not text:
+                continue
+            level = infer_heading_level(text)
+            ptype = ParagraphType.HEADING if level > 0 else classify_paragraph(text)
+            style_name = paragraph.style.name if paragraph.style else ""
+            block = TextBlock(
+                text=text,
+                block_type="heading" if level > 0 else "paragraph",
+                level=level,
+                style_name=style_name,
+                index=para_index,
+                para_index=para_index,
+                paragraph_type=ptype,
             )
-            current_section.tables.append(ptable)
+            paragraphs.append(block)
+            if level > 0:
+                headings.append(block)
+                section_type = infer_section_type(text)
+                if section_type != DocumentSectionType.UNKNOWN:
+                    current_section.end_index = para_index
+                    sections.append(current_section)
+                    current_section = DocumentSection(
+                        section_type=section_type,
+                        title=text,
+                        level=level,
+                        start_index=para_index,
+                        end_index=para_index,
+                        headings=[text],
+                        paragraphs=[],
+                        tables=[],
+                    )
+                else:
+                    current_section.headings.append(text)
+            else:
+                current_section.paragraphs.append(block)
+            para_index += 1
+        elif element.tag.endswith("tbl"):
+            table = Table(element, doc)
+            raw = _extract_raw_table(table)
+            raw_tables.append(raw)
+            if raw:
+                ptable = ParsedTable(
+                    table_type=classify_table(raw[0]).value,
+                    header=raw[0],
+                    rows=raw[1:],
+                    index=table_index,
+                )
+                current_section.tables.append(ptable)
+            table_index += 1
 
     current_section.end_index = para_index
     sections.append(current_section)
