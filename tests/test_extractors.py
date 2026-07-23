@@ -163,3 +163,103 @@ def test_table_row_extractor_technical_spec():
     assert len(items) == 1
     assert items[0].category == RequirementCategory.TECHNICAL
     assert "99.9%" in items[0].raw_text
+    assert items[0].stable_hash is not None
+    assert len(items[0].stable_hash) == 16
+
+
+def test_table_row_extractor_service_list():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "服务清单",
+        2,
+        0,
+        10,
+        ["服务清单"],
+        paragraphs=[],
+        tables=[
+            ParsedTable(
+                table_type="service_list",
+                header=["服务内容", "数量", "单位"],
+                rows=[["桌面运维", "3", "人"]],
+                index=0,
+            )
+        ],
+    )
+    extractor = TableRowExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) == 1
+    assert items[0].category == RequirementCategory.DELIVERY
+    assert items[0].raw_text == "桌面运维 | 3 | 人"
+
+
+def test_table_row_extractor_qualification():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "资质要求",
+        2,
+        0,
+        10,
+        ["资质要求"],
+        paragraphs=[],
+        tables=[
+            ParsedTable(
+                table_type="qualification",
+                header=["资质项", "要求"],
+                rows=[["营业执照", "有效期内"]],
+                index=0,
+            )
+        ],
+    )
+    extractor = TableRowExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) == 1
+    assert items[0].category == RequirementCategory.QUALIFICATION
+    assert "营业执照" in items[0].raw_text
+
+
+def test_table_row_extractor_scoring():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "评分标准",
+        2,
+        0,
+        10,
+        ["评分标准"],
+        paragraphs=[],
+        tables=[
+            ParsedTable(
+                table_type="evaluation",
+                header=["评分项", "分值"],
+                rows=[["技术方案", "30"]],
+                index=0,
+            )
+        ],
+    )
+    extractor = TableRowExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) == 1
+    assert items[0].category == RequirementCategory.SCORING
+    assert items[0].constraint_type == ConstraintType.SCORING
+
+
+def test_table_row_extractor_unknown_type_returns_empty():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "其他",
+        2,
+        0,
+        10,
+        ["其他"],
+        paragraphs=[],
+        tables=[
+            ParsedTable(
+                table_type="unknown",
+                header=["列1", "列2"],
+                rows=[["a", "b"]],
+                index=0,
+            )
+        ],
+    )
+    extractor = TableRowExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert items == []

@@ -1,7 +1,10 @@
+from __future__ import annotations
+
+import hashlib
 from abc import ABC, abstractmethod
 from typing import List
 
-from proofreader.extractors.base import _heading_prefix
+from proofreader.extractors.base import heading_prefix
 from proofreader.models.requirements import (
     CheckMethod,
     ConstraintType,
@@ -39,9 +42,13 @@ class TechnicalSpecStrategy(TableStrategy):
         category: RequirementCategory,
         constraint_type: ConstraintType = ConstraintType.MANDATORY,
     ) -> RequirementItem:
-        prefix = _heading_prefix(section)
+        prefix = heading_prefix(section)
+        stable_hash = hashlib.sha256(
+            (raw_text + (section.headings[-1] if section.headings else "")).encode()
+        ).hexdigest()[:16]
         return RequirementItem(
             id=f"{prefix}-T{section.level:02d}-{hash(raw_text) & 0xFFFF:04x}",
+            stable_hash=stable_hash,
             source_doc=str(doc.path) if doc else "",
             chapter_path=section.headings[:],
             title=section.title,
@@ -72,6 +79,8 @@ class QualificationStrategy(TechnicalSpecStrategy):
     def extract(self, table, section, doc):
         items = []
         for row in table.rows:
+            if not row:
+                continue
             raw_text = " | ".join(row)
             items.append(
                 self._make_item(
@@ -85,6 +94,8 @@ class ScoringStrategy(TechnicalSpecStrategy):
     def extract(self, table, section, doc):
         items = []
         for row in table.rows:
+            if not row:
+                continue
             raw_text = " | ".join(row)
             items.append(
                 self._make_item(
