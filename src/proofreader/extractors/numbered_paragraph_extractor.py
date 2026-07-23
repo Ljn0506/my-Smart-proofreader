@@ -74,5 +74,5 @@ class NumberedParagraphExtractor(BaseExtractor):
         return ConstraintType.MANDATORY
 
     def _generate_id(self, section: DocumentSection, para: TextBlock) -> str:
-        prefix = "-".join(h.replace(" ", "")[:8] for h in section.headings[:2]) or "REQ"
+        prefix = self._heading_prefix(section)
         return f"{prefix}-{para.index:04d}"

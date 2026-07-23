@@ -10,7 +10,7 @@ from proofreader.models.requirements import (
     RequirementItem,
     ReviewStatus,
 )
-from proofreader.parsers.docx_parser import DocumentSection, ParagraphType, ParsedDocument, TextBlock
+from proofreader.parsers.docx_parser import DocumentSection, ParagraphType, ParsedDocument
 
 
 class HeadingBasedExtractor(BaseExtractor):
@@ -49,5 +49,5 @@ class HeadingBasedExtractor(BaseExtractor):
         return items
 
     def _generate_id(self, section: DocumentSection) -> str:
-        prefix = "-".join(h.replace(" ", "")[:8] for h in section.headings[:2]) or "REQ"
+        prefix = self._heading_prefix(section)
         return f"{prefix}-H{section.level:02d}"

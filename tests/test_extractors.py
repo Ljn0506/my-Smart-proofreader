@@ -83,3 +83,57 @@ def test_heading_based_extractor():
     items = extractor.extract_from_section(section, None)
     assert len(items) >= 1
     assert any("驻场人员" in item.raw_text for item in items)
+
+
+def test_heading_based_extractor_empty_title_returns_empty():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "",
+        2,
+        0,
+        10,
+        ["二、运维服务需求"],
+        paragraphs=[
+            TextBlock("现需配备3名驻场人员。", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=0),
+        ],
+        tables=[],
+    )
+    extractor = HeadingBasedExtractor()
+    assert extractor.extract_from_section(section, None) == []
+
+
+def test_heading_based_extractor_short_paragraphs_returns_empty():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "2.1 桌面运维服务",
+        2,
+        0,
+        10,
+        ["二、运维服务需求", "2.1 桌面运维服务"],
+        paragraphs=[
+            TextBlock("短文本。", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=0),
+            TextBlock("plain text", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=1),
+        ],
+        tables=[],
+    )
+    extractor = HeadingBasedExtractor()
+    assert extractor.extract_from_section(section, None) == []
+
+
+def test_heading_based_extractor_accepts_none_doc():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "2.1 桌面运维服务",
+        2,
+        0,
+        10,
+        ["二、运维服务需求", "2.1 桌面运维服务"],
+        paragraphs=[
+            TextBlock("现需配备3名驻场人员。", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=0),
+        ],
+        tables=[],
+    )
+    extractor = HeadingBasedExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) == 1
+    assert items[0].source_doc == ""
