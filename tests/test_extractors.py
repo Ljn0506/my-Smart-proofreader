@@ -282,3 +282,24 @@ def test_semantic_deduplicator():
     dedup = SemanticDeduplicator(threshold=0.95)
     result = dedup.deduplicate(items)
     assert len(result) == 1
+
+
+def test_extract_requirements_backward_compatible():
+    from proofreader.extractors.requirement_extractor import extract_requirements
+
+    doc = ParsedDocument(path="test.docx", doc_type="tender_document", title=None, sections=[], blocks=[], headings=[], raw_tables=[])
+    doc.sections = [
+        DocumentSection(
+            DocumentSectionType.REQUIREMENTS,
+            "需求",
+            1,
+            0,
+            10,
+            ["需求"],
+            paragraphs=[TextBlock("1. 服务期限：12个月", "paragraph", paragraph_type=ParagraphType.NUMBERED_REQUIREMENT, index=0)],
+            tables=[],
+        )
+    ]
+    items = extract_requirements(doc)
+    assert len(items) == 1
+    assert "12个月" in items[0].raw_text
