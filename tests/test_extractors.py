@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from proofreader.extractors.base import BaseExtractor
 from proofreader.extractors.composite_extractor import CompositeExtractor
+from proofreader.extractors.deduplicator import SemanticDeduplicator
 from proofreader.extractors.heading_based_extractor import HeadingBasedExtractor
 from proofreader.extractors.numbered_paragraph_extractor import NumberedParagraphExtractor
 from proofreader.extractors.table_row_extractor import TableRowExtractor
-from proofreader.models.requirements import ConstraintType, RequirementCategory, RequirementItem
+from proofreader.models.requirements import CheckMethod, ConstraintType, RequirementCategory, RequirementItem
 from proofreader.parsers.docx_parser import DocumentSection, DocumentSectionType, ParagraphType, ParsedDocument, ParsedTable, TextBlock
 
 
@@ -263,3 +264,21 @@ def test_table_row_extractor_unknown_type_returns_empty():
     extractor = TableRowExtractor()
     items = extractor.extract_from_section(section, None)
     assert items == []
+
+
+def test_semantic_deduplicator():
+    base = dict(
+        source_doc="test.docx",
+        chapter_path=["1"],
+        category=RequirementCategory.TECHNICAL,
+        constraint_type=ConstraintType.MANDATORY,
+        check_method=CheckMethod.RULE,
+        extracted_by="rule",
+    )
+    items = [
+        RequirementItem(id="A", raw_text="系统可用性不低于 99.9%", normalized_text="系统可用性不低于99.9%", **base),
+        RequirementItem(id="B", raw_text="系统可用性不低于99.9%", normalized_text="系统可用性不低于99.9%", **base),
+    ]
+    dedup = SemanticDeduplicator(threshold=0.95)
+    result = dedup.deduplicate(items)
+    assert len(result) == 1
