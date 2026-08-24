@@ -7,6 +7,24 @@ from typing import Any, List, Optional
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
+class DocumentType(str, Enum):
+    TENDER = "tender"
+    BID_REGISTRATION = "bid_registration"
+    BID_RESPONSE = "bid_response"
+    PRODUCT_SOLUTION = "product_solution"
+    REQUIREMENT = "requirement"
+    OTHER = "other"
+
+
+class ProcurementMethod(str, Enum):
+    BIXUAN = "bixuan"
+    COMPETITIVE_NEGOTIATION = "competitive_negotiation"
+    TENDER = "tender"
+    SELECTION = "selection"
+    PRODUCT_DEMO = "product_demo"
+    OTHER = "other"
+
+
 class ConstraintType(str, Enum):
     MANDATORY = "必须"
     SCORING = "评分项"
@@ -72,6 +90,9 @@ class RequirementItem(BaseModel):
     manual_note: Optional[str] = None
     template_ref: Optional[str] = None
     project_specific: bool = False
+    raw_marker: Optional[str] = None
+    max_score: Optional[float] = None
+    evaluation_criteria: Optional[str] = None
     created_at: Optional[datetime] = None
     modified_at: Optional[datetime] = None
     version: int = 1
@@ -108,3 +129,18 @@ class RequirementItem(BaseModel):
     @property
     def section_title(self) -> str:
         return self.title or (self.chapter_path[-1] if self.chapter_path else "")
+
+
+class EvaluationRule(BaseModel):
+    rule_text: str
+    base_score: Optional[float] = None
+    deduction_per_item: Optional[float] = None
+    applies_to_requirement_ids: List[str] = Field(default_factory=list)
+    confidence: float = 1.0
+
+
+class DocumentClassificationResult(BaseModel):
+    document_type: DocumentType
+    procurement_method: ProcurementMethod
+    confidence: float
+    method: str = "rule"
