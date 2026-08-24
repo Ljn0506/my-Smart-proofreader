@@ -411,7 +411,11 @@ def _parse_docx_document(doc_path: Path, original_path: Path) -> ParsedDocument:
 
 
 def parse_docx(path: Path | str) -> ParsedDocument:
-    """解析 Word 文件，支持 .docx 与 .doc（依赖 LibreOffice 转换）。"""
+    """解析 Word 文件，支持 .docx 与 .doc（依赖 LibreOffice 转换）。
+
+    返回的 ParsedDocument 同时包含完整的 blocks/images（供展示与校对使用）
+    以及按章节切分的 sections（供提取器与分类器使用）。
+    """
     path = Path(path)
     original_path = path
 
@@ -419,9 +423,15 @@ def parse_docx(path: Path | str) -> ParsedDocument:
         with tempfile.TemporaryDirectory(prefix="smart_proofreader_doc_convert_") as tmp_dir_str:
             tmp_dir = Path(tmp_dir_str)
             converted_path = convert_doc_to_docx(path, tmp_dir)
-            return _parse_docx_document(converted_path, original_path)
+            doc = _parse_docx_document(converted_path, original_path)
+            sectioned = parse_docx_with_sections(converted_path)
+            doc.sections = sectioned.sections
+            return doc
 
-    return _parse_docx_document(path, original_path)
+    doc = _parse_docx_document(path, original_path)
+    sectioned = parse_docx_with_sections(path)
+    doc.sections = sectioned.sections
+    return doc
 
 
 def parse_docx_with_sections(path: Path | str) -> ParsedDocument:
@@ -451,6 +461,7 @@ def parse_docx_with_sections(path: Path | str) -> ParsedDocument:
             paragraph = Paragraph(element, doc)
             text = paragraph.text.strip()
             if not text:
+                para_index += 1
                 continue
             level = infer_heading_level(text)
             ptype = ParagraphType.HEADING if level > 0 else classify_paragraph(text)
