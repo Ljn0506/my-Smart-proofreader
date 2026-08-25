@@ -1,6 +1,7 @@
 """文档类型与采购方式分类器。规则 → embedding → LLM 兜底。"""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 from proofreader.models.requirements import (
@@ -36,7 +37,11 @@ _BID_RESPONSE_SECTIONS = ["资格性文件", "商务部分", "技术部分", "�
 
 def _score_rule(doc: ParsedDocument) -> tuple[DocumentType, ProcurementMethod, float]:
     heading_texts = [h.text if hasattr(h, "text") else str(h) for h in doc.headings[:10]]
-    text = (doc.title or "") + " " + " ".join(heading_texts)
+    path_hint = ""
+    if doc.path:
+        p = Path(doc.path) if isinstance(doc.path, str) else doc.path
+        path_hint = p.stem
+    text = (doc.title or "") + " " + " ".join(heading_texts) + " " + path_hint
     best_type = DocumentType.OTHER
     best_method = ProcurementMethod.OTHER
     best_score = 0.0
