@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 
 from proofreader.extractors.base import heading_prefix
 from proofreader.models.requirements import (
@@ -97,16 +98,34 @@ class ScoringStrategy(TechnicalSpecStrategy):
             if not row:
                 continue
             raw_text = " | ".join(row)
-            items.append(
-                self._make_item(
-                    raw_text,
-                    section,
-                    doc,
-                    RequirementCategory.SCORING,
-                    constraint_type=ConstraintType.SCORING,
-                )
+            max_score = self._extract_max_score(row)
+            marker = self._extract_marker(raw_text)
+            item = self._make_item(
+                raw_text=raw_text,
+                section=section,
+                doc=doc,
+                category=RequirementCategory.SCORING,
+                constraint_type=ConstraintType.SCORING,
             )
+            item.max_score = max_score
+            item.raw_marker = marker
+            item.evaluation_criteria = raw_text
+            items.append(item)
         return items
+
+    def _extract_max_score(self, row: List[str]) -> Optional[float]:
+        for cell in reversed(row):
+            m = re.search(r"(\d+(?:\.\d+)?)", cell)
+            if m and ("分" in cell or "%" not in cell):
+                return float(m.group(1))
+        return None
+
+    def _extract_marker(self, text: str) -> Optional[str]:
+        if "★" in text:
+            return "★"
+        if "▲" in text:
+            return "▲"
+        return None
 
 
 class SkipStrategy(TableStrategy):
