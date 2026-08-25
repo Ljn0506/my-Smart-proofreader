@@ -14,6 +14,8 @@ from docx import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
+from proofreader.models.requirements import DocumentType, ProcurementMethod
+
 
 class DocumentSectionType(str, Enum):
     TENDER_NOTICE = "tender_notice"
@@ -23,12 +25,6 @@ class DocumentSectionType(str, Enum):
     CONTRACT = "contract"
     BID_TEMPLATE = "bid_template"
     UNKNOWN = "unknown"
-
-
-class DocumentType(str, Enum):
-    TENDER = "tender_document"
-    REQUIREMENT = "requirement_document"
-    BID = "bid_document"
 
 
 class ParagraphType(str, Enum):
@@ -205,6 +201,9 @@ class ParsedDocument:
     """解析后的文档对象。"""
     path: Path
     doc_type: DocumentType = DocumentType.TENDER
+    procurement_method: ProcurementMethod = ProcurementMethod.OTHER
+    classification_confidence: float = 0.0
+    classification_method: str = ""
     title: Optional[str] = None
     sections: List[DocumentSection] = field(default_factory=list)
     blocks: List[TextBlock] = field(default_factory=list)
@@ -414,7 +413,7 @@ def parse_docx(path: Path | str) -> ParsedDocument:
     """解析 Word 文件，支持 .docx 与 .doc（依赖 LibreOffice 转换）。
 
     返回的 ParsedDocument 同时包含完整的 blocks/images（供展示与校对使用）
-    以及按章节切分的 sections（供提取器与分类器使用）。
+    以及按章节切分的 sections（供提取器与分类器使用），并附加文档类型分类结果。
     """
     path = Path(path)
     original_path = path
@@ -426,12 +425,28 @@ def parse_docx(path: Path | str) -> ParsedDocument:
             doc = _parse_docx_document(converted_path, original_path)
             sectioned = parse_docx_with_sections(converted_path)
             doc.sections = sectioned.sections
+            _attach_classification(doc)
             return doc
 
     doc = _parse_docx_document(path, original_path)
     sectioned = parse_docx_with_sections(path)
     doc.sections = sectioned.sections
+    _attach_classification(doc)
     return doc
+
+
+def _attach_classification(doc: ParsedDocument) -> None:
+    """填充文档标题并运行文档类型分类器。"""
+    if not doc.title and doc.headings:
+        doc.title = doc.headings[0].text
+    # 延迟导入避免循环依赖
+    from proofreader.parsers.document_type_classifier import classify_document
+
+    classification = classify_document(doc)
+    doc.doc_type = classification.document_type
+    doc.procurement_method = classification.procurement_method
+    doc.classification_confidence = classification.confidence
+    doc.classification_method = classification.method
 
 
 def parse_docx_with_sections(path: Path | str) -> ParsedDocument:
