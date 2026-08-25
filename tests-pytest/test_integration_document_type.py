@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -7,12 +8,15 @@ from proofreader.extractors.table_row_extractor import TableRowExtractor
 from proofreader.parsers.docx_parser import parse_docx
 
 
+_DEFAULT_TENDER_DOC = (
+    "/Users/ljn/原始投标文件/原始招标文件/广州市荔湾区中医医院数据安全及个人信息保护服务项目/"
+    "（比选文件）广州市荔湾区中医医院数据安全及个人信息保护服务项目.doc"
+)
+
+
 @pytest.fixture(scope="module")
 def tender_doc_path():
-    return Path(
-        "/Users/ljn/原始投标文件/原始招标文件/广州市荔湾区中医医院数据安全及个人信息保护服务项目/"
-        "（比选文件）广州市荔湾区中医医院数据安全及个人信息保护服务项目.doc"
-    )
+    return Path(os.environ.get("SMART_PROOFREADER_TENDER_DOC", _DEFAULT_TENDER_DOC))
 
 
 def test_real_tender_classification_and_scoring(tender_doc_path, tmp_path):

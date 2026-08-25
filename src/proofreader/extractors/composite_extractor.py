@@ -34,12 +34,16 @@ class CompositeExtractor(BaseExtractor):
         for section in doc.sections:
             if section.section_type == DocumentSectionType.BID_TEMPLATE:
                 continue
+            section_items: List[RequirementItem] = []
             for extractor in self.extractors:
-                items.extend(extractor.extract_from_section(section, doc))
-            scoring_rules.extend(self.scoring_extractor.extract_from_section(section, doc))
+                section_items.extend(extractor.extract_from_section(section, doc))
+            section_rules = self.scoring_extractor.extract_from_section(section, doc)
+            section_rules = self.scoring_extractor.link_rules_to_items(section_rules, section_items)
+
+            items.extend(section_items)
+            scoring_rules.extend(section_rules)
 
         items = self.deduplicator.deduplicate(items)
-        scoring_rules = self.scoring_extractor.link_rules_to_items(scoring_rules, items)
         return ExtractionResult(items=items, evaluation_rules=scoring_rules)
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 import re
 from typing import List
 
-from proofreader.extractors.base import BaseExtractor
 from proofreader.models.requirements import EvaluationRule, RequirementCategory, RequirementItem
 from proofreader.parsers.docx_parser import DocumentSection, DocumentSectionType, ParsedDocument
 
@@ -15,7 +14,12 @@ _AGGREGATE_PATTERNS = [
 ]
 
 
-class ScoringExtractor(BaseExtractor):
+class ScoringExtractor:
+    """从 EVALUATION section 的段落文本中提取聚合评分规则。
+
+    注意：本类不继承 BaseExtractor，因为其产出是 EvaluationRule 而非 RequirementItem。
+    """
+
     def extract_from_section(
         self, section: DocumentSection, doc: ParsedDocument
     ) -> List[EvaluationRule]:
@@ -42,13 +46,18 @@ class ScoringExtractor(BaseExtractor):
     def link_rules_to_items(
         self, rules: List[EvaluationRule], items: List[RequirementItem]
     ) -> List[EvaluationRule]:
-        """Associate aggregate rules with scoring items by section/chapter path."""
+        """将聚合规则与同一章节路径下的评分项关联。"""
         linked = []
-        scoring_items = [it for it in items if it.category == RequirementCategory.SCORING]
         for rule in rules:
             linked.append(
                 rule.model_copy(
-                    update={"applies_to_requirement_ids": [it.id for it in scoring_items]}
+                    update={
+                        "applies_to_requirement_ids": [
+                            it.id
+                            for it in items
+                            if it.category == RequirementCategory.SCORING
+                        ]
+                    }
                 )
             )
         return linked

@@ -48,7 +48,7 @@ class TechnicalSpecStrategy(TableStrategy):
             (raw_text + (section.headings[-1] if section.headings else "")).encode()
         ).hexdigest()[:16]
         return RequirementItem(
-            id=f"{prefix}-T{section.level:02d}-{hash(raw_text) & 0xFFFF:04x}",
+            id=f"{prefix}-T{section.level:02d}-{stable_hash[:4]}",
             stable_hash=stable_hash,
             source_doc=str(doc.path) if doc else "",
             chapter_path=section.headings[:],
