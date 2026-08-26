@@ -263,10 +263,6 @@ def find_soffice() -> str | None:
     return None
 
 
-# 保留旧别名，兼容现有内部调用
-_find_soffice = find_soffice
-
-
 def convert_doc_to_docx(doc_path: Path, output_dir: Path) -> Path:
     """使用 LibreOffice 将 .doc 转换为 .docx，返回转换后的文件路径。"""
     soffice = find_soffice()
@@ -310,17 +306,29 @@ def convert_doc_to_docx(doc_path: Path, output_dir: Path) -> Path:
     return converted
 
 
-# 保留旧别名，兼容现有内部调用
-_convert_doc_to_docx = convert_doc_to_docx
-
-
 def _parse_docx_document(doc_path: Path, original_path: Path) -> ParsedDocument:
-    """解析已转换/本身就是 .docx 的文档，返回 ParsedDocument（保留原始路径）。"""
+    """解析已转换/本身就是 .docx 的文档，返回完整的 ParsedDocument。
+
+    单次遍历同时生成：blocks、headings、sections、raw_tables、images，避免重复解析。
+    """
     doc = Document(str(doc_path))
 
     parsed = ParsedDocument(path=original_path)
+    sections: List[DocumentSection] = []
+    current_section = DocumentSection(
+        section_type=DocumentSectionType.UNKNOWN,
+        title=None,
+        level=0,
+        start_index=0,
+        end_index=0,
+        headings=[],
+        paragraphs=[],
+        tables=[],
+    )
+
     block_index = 0
     body_para_index = 0  # 仅统计 body 下 <w:p> 的顺序，与 Document.paragraphs 对齐
+    table_index = 0
     # 记录每个顶层段落元素对应的文本块序号，用于后续图片定位
     para_element_to_block_index: Dict[object, int] = {}
 
@@ -334,20 +342,46 @@ def _parse_docx_document(doc_path: Path, original_path: Path) -> ParsedDocument:
                 para_element_to_block_index[element] = max(0, block_index - 1)
                 body_para_index += 1
                 continue
+
             # 先记录段落所在块序号
             para_element_to_block_index[element] = block_index
+
+            paragraph_type = ParagraphType.HEADING if is_heading else classify_paragraph(text)
+            inferred_level = infer_heading_level(text)
 
             block = TextBlock(
                 text=text,
                 block_type="heading" if is_heading else "paragraph",
-                level=level,
+                level=level if is_heading else inferred_level,
                 style_name=paragraph.style.name if paragraph.style else "",
                 index=block_index,
                 para_index=body_para_index,
+                paragraph_type=paragraph_type,
             )
             parsed.blocks.append(block)
             if is_heading:
                 parsed.headings.append(block)
+
+            # 章节边界检测：基于标题文本推断 section 类型
+            if inferred_level > 0:
+                section_type = infer_section_type(text)
+                if section_type != DocumentSectionType.UNKNOWN:
+                    current_section.end_index = body_para_index
+                    sections.append(current_section)
+                    current_section = DocumentSection(
+                        section_type=section_type,
+                        title=text,
+                        level=inferred_level,
+                        start_index=body_para_index,
+                        end_index=body_para_index,
+                        headings=[text],
+                        paragraphs=[],
+                        tables=[],
+                    )
+                else:
+                    current_section.headings.append(text)
+            current_section.paragraphs.append(block)
+
             block_index += 1
             body_para_index += 1
 
@@ -368,6 +402,20 @@ def _parse_docx_document(doc_path: Path, original_path: Path) -> ParsedDocument:
                 )
                 parsed.blocks.append(block)
                 block_index += 1
+
+            if raw_table:
+                ptable = ParsedTable(
+                    table_type=classify_table(raw_table[0]).value,
+                    header=raw_table[0],
+                    rows=raw_table[1:],
+                    index=table_index,
+                )
+                current_section.tables.append(ptable)
+            table_index += 1
+
+    current_section.end_index = body_para_index
+    sections.append(current_section)
+    parsed.sections = sections
 
     # 提取图片，并记录其所在的段落/块位置
     image_index = 0
@@ -409,6 +457,19 @@ def _parse_docx_document(doc_path: Path, original_path: Path) -> ParsedDocument:
     return parsed
 
 
+# 文档安全上限：50 MB；超过则拒绝解析，避免 LibreOffice / python-docx 耗尽内存
+_MAX_DOC_BYTES = 50 * 1024 * 1024
+
+
+def _check_doc_size(path: Path) -> None:
+    size = path.stat().st_size
+    if size > _MAX_DOC_BYTES:
+        raise RuntimeError(
+            f"文档 {path.name} 大小为 {size / (1024 * 1024):.1f} MB，"
+            f"超过允许上限 {_MAX_DOC_BYTES / (1024 * 1024):.0f} MB，拒绝解析。"
+        )
+
+
 def parse_docx(path: Path | str) -> ParsedDocument:
     """解析 Word 文件，支持 .docx 与 .doc（依赖 LibreOffice 转换）。
 
@@ -417,20 +478,18 @@ def parse_docx(path: Path | str) -> ParsedDocument:
     """
     path = Path(path)
     original_path = path
+    _check_doc_size(path)
 
     if path.suffix.lower() == ".doc":
         with tempfile.TemporaryDirectory(prefix="smart_proofreader_doc_convert_") as tmp_dir_str:
             tmp_dir = Path(tmp_dir_str)
             converted_path = convert_doc_to_docx(path, tmp_dir)
+            _check_doc_size(converted_path)
             doc = _parse_docx_document(converted_path, original_path)
-            sectioned = parse_docx_with_sections(converted_path)
-            doc.sections = sectioned.sections
             _attach_classification(doc)
             return doc
 
     doc = _parse_docx_document(path, original_path)
-    sectioned = parse_docx_with_sections(path)
-    doc.sections = sectioned.sections
     _attach_classification(doc)
     return doc
 
@@ -450,91 +509,9 @@ def _attach_classification(doc: ParsedDocument) -> None:
 
 
 def parse_docx_with_sections(path: Path | str) -> ParsedDocument:
-    """解析 Word 文件并按章节切分，保留段落类型与表格类型。"""
+    """解析 Word 文件并按章节切分，保留段落类型与表格类型。
+
+    现在与 _parse_docx_document 共享同一次解析，避免重复读取和解析 docx。
+    """
     path = Path(path)
-    doc = Document(str(path))
-    sections: List[DocumentSection] = []
-    current_section = DocumentSection(
-        section_type=DocumentSectionType.UNKNOWN,
-        title=None,
-        level=0,
-        start_index=0,
-        end_index=0,
-        headings=[],
-        paragraphs=[],
-        tables=[],
-    )
-    paragraphs: List[TextBlock] = []
-    headings: List[TextBlock] = []
-    raw_tables: List[List[List[str]]] = []
-
-    para_index = 0
-    table_index = 0
-    # 按文档 body 的真实顺序遍历段落和表格，确保表格被挂载到当前所在 section
-    for element in doc.element.body:
-        if element.tag.endswith("p"):
-            paragraph = Paragraph(element, doc)
-            text = paragraph.text.strip()
-            if not text:
-                para_index += 1
-                continue
-            level = infer_heading_level(text)
-            ptype = ParagraphType.HEADING if level > 0 else classify_paragraph(text)
-            style_name = paragraph.style.name if paragraph.style else ""
-            block = TextBlock(
-                text=text,
-                block_type="heading" if level > 0 else "paragraph",
-                level=level,
-                style_name=style_name,
-                index=para_index,
-                para_index=para_index,
-                paragraph_type=ptype,
-            )
-            paragraphs.append(block)
-            if level > 0:
-                headings.append(block)
-                section_type = infer_section_type(text)
-                if section_type != DocumentSectionType.UNKNOWN:
-                    current_section.end_index = para_index
-                    sections.append(current_section)
-                    current_section = DocumentSection(
-                        section_type=section_type,
-                        title=text,
-                        level=level,
-                        start_index=para_index,
-                        end_index=para_index,
-                        headings=[text],
-                        paragraphs=[],
-                        tables=[],
-                    )
-                else:
-                    current_section.headings.append(text)
-            else:
-                current_section.paragraphs.append(block)
-            para_index += 1
-        elif element.tag.endswith("tbl"):
-            table = Table(element, doc)
-            raw = _extract_raw_table(table)
-            raw_tables.append(raw)
-            if raw:
-                ptable = ParsedTable(
-                    table_type=classify_table(raw[0]).value,
-                    header=raw[0],
-                    rows=raw[1:],
-                    index=table_index,
-                )
-                current_section.tables.append(ptable)
-            table_index += 1
-
-    current_section.end_index = para_index
-    sections.append(current_section)
-
-    return ParsedDocument(
-        path=path,
-        doc_type=DocumentType.TENDER,
-        title=None,
-        sections=sections,
-        blocks=paragraphs,
-        headings=headings,
-        raw_tables=raw_tables,
-    )
+    return _parse_docx_document(path, path)
