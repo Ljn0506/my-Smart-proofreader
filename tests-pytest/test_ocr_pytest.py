@@ -26,6 +26,16 @@ def ocr_engine() -> OcrEngine:
     return engine
 
 
+@pytest.fixture(autouse=True)
+def isolate_ocr_reader_cache():
+    """每个测试用例之间隔离 OCR 引擎的 reader 缓存，避免语言/gpu 设置泄漏。"""
+    original = dict(OcrEngine._reader_cache)
+    OcrEngine._reader_cache.clear()
+    yield
+    OcrEngine._reader_cache.clear()
+    OcrEngine._reader_cache.update(original)
+
+
 def test_ocr_caches_result_by_image_hash(ocr_engine: OcrEngine) -> None:
     """对同一张图片多次识别应直接返回缓存结果。"""
     base = Path(__file__).parent.parent / "data" / "sample-docs"

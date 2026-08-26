@@ -46,3 +46,16 @@ def test_normalize_date_range():
     result = normalize_period("2023年1月1日至2023年12月31日")
     assert result.start == date(2023, 1, 1)
     assert result.end == date(2023, 12, 31)
+
+
+def test_normalize_invalid_calendar_dates():
+    """不存在的日历日期应返回 None，而非抛出异常。"""
+    assert normalize_date("2026年2月30日") is None
+    assert normalize_date("2026年4月31日") is None
+    assert normalize_date("2026年13月1日") is None
+
+
+def test_normalize_period_no_match():
+    """无法识别的期间字符串应返回 None。"""
+    assert normalize_period("完全不是期间") is None
+    assert normalize_period("") is None

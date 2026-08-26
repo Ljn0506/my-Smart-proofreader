@@ -1,6 +1,8 @@
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from proofreader.models.requirements import (
     CheckMethod,
     ConstraintType,
@@ -32,3 +34,31 @@ def test_save_and_load_requirements():
         assert len(loaded) == 1
         assert loaded[0].id == "REQ-1-001"
         assert loaded[0].review_status == ReviewStatus.CONFIRMED
+
+
+def test_repo_rejects_path_traversal():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = JsonRequirementRepository(base_dir=Path(tmp))
+        with pytest.raises(ValueError):
+            repo.create_project("../evil", "x")
+        repo.create_project("legal", "x")
+        with pytest.raises(ValueError):
+            repo.save_requirements("../evil", [])
+        assert not (Path(tmp).parent / "evil").exists()
+
+
+def test_repo_load_missing_returns_empty():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = JsonRequirementRepository(base_dir=Path(tmp))
+        repo.create_project("p", "n")
+        assert repo.load_requirements("p") == []
+
+
+def test_repo_load_bad_schema_raises():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = JsonRequirementRepository(base_dir=Path(tmp))
+        repo.create_project("p", "n")
+        path = Path(tmp) / "p" / "requirements.json"
+        path.write_text('{"schema_version": "2.0", "items": []}', encoding="utf-8")
+        with pytest.raises(ValueError):
+            repo.load_requirements("p")

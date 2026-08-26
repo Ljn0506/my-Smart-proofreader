@@ -281,10 +281,6 @@ def _match_with_vectors(
         ] or list(range(len(bid_blocks)))
 
         # 严格匹配
-        strict_hits: List[Tuple[TextBlock, float]] = []
-        keyword_hits: List[Tuple[TextBlock, float]] = []
-        semantic_hits: List[Tuple[TextBlock, float]] = []
-
         block_scores = []
         for j in compatible_indices:
             block = bid_blocks[j]

@@ -1,8 +1,6 @@
 from proofreader.models.requirements import (
     DocumentClassificationResult,
-    DocumentType,
     EvaluationRule,
-    ProcurementMethod,
     RequirementItem,
 )
 
@@ -46,3 +44,15 @@ def test_document_classification_result():
         method="rule",
     )
     assert result.confidence == 0.92
+
+
+def test_requirement_item_legacy_aliases():
+    """旧接口使用 item_id/text/section_title 仍可构建 RequirementItem。"""
+    item = RequirementItem(
+        item_id="R1",
+        text="需求文本",
+        section_title="标题",
+    )
+    assert item.id == "R1"
+    assert item.raw_text == "需求文本"
+    assert item.title == "标题"

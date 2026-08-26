@@ -1,4 +1,3 @@
-from datetime import datetime
 from proofreader.models.requirements import (
     CheckTarget,
     CheckMethod,

@@ -505,7 +505,6 @@ def test_semantic_low_without_span_is_not_annotated(
 ) -> None:
     """无具体标红文字的低置信度 SEMANTIC_LOW 不应生成 Word 批注，避免无效批注泛滥。"""
     import zipfile
-    from lxml import etree
 
     from proofreader.checkers.consistency_checker import (
         ConsistencyIssue,

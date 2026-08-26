@@ -141,7 +141,41 @@ def test_heading_based_extractor_accepts_none_doc():
     assert items[0].source_doc == ""
 
 
-def test_table_row_extractor_technical_spec():
+def test_numbered_paragraph_extractor_skips_short_text():
+    """编号段落文本过短（少于 5 字符）时应被跳过。"""
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "需求",
+        1,
+        0,
+        10,
+        ["需求"],
+        paragraphs=[
+            TextBlock("1. x", "paragraph", paragraph_type=ParagraphType.NUMBERED_REQUIREMENT, index=0),
+        ],
+        tables=[],
+    )
+    extractor = NumberedParagraphExtractor()
+    assert extractor.extract_from_section(section, None) == []
+
+
+def test_heading_based_extractor_skips_non_plain_and_short():
+    """非正文段落与短段落不应被提取为独立需求。"""
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "2.1 桌面运维服务",
+        2,
+        0,
+        10,
+        ["二、运维服务需求", "2.1 桌面运维服务"],
+        paragraphs=[
+            TextBlock("1. 编号项", "paragraph", paragraph_type=ParagraphType.NUMBERED_REQUIREMENT, index=0),
+            TextBlock("短。", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=1),
+        ],
+        tables=[],
+    )
+    extractor = HeadingBasedExtractor()
+    assert extractor.extract_from_section(section, None) == []
     section = DocumentSection(
         DocumentSectionType.REQUIREMENTS,
         "技术指标",
@@ -282,6 +316,46 @@ def test_semantic_deduplicator():
     dedup = SemanticDeduplicator(threshold=0.95)
     result = dedup.deduplicate(items)
     assert len(result) == 1
+
+
+def test_deduplicator_handles_empty_and_single():
+    """空列表与单元素列表应原样返回，避免边界异常。"""
+    base = dict(
+        source_doc="s.docx",
+        chapter_path=["c"],
+        category=RequirementCategory.TECHNICAL,
+        constraint_type=ConstraintType.MANDATORY,
+        check_method=CheckMethod.RULE,
+        extracted_by="rule",
+    )
+    dedup = SemanticDeduplicator()
+    assert dedup.deduplicate([]) == []
+    item = RequirementItem(
+        id="1",
+        raw_text="x",
+        normalized_text="x",
+        **base,
+    )
+    assert dedup.deduplicate([item]) == [item]
+
+
+def test_deduplicator_handles_empty_normalized_text():
+    """normalized_text 为空或仅空白时应被安全跳过，不抛异常。"""
+    base = dict(
+        source_doc="s.docx",
+        chapter_path=["c"],
+        category=RequirementCategory.TECHNICAL,
+        constraint_type=ConstraintType.MANDATORY,
+        check_method=CheckMethod.RULE,
+        extracted_by="rule",
+    )
+    items = [
+        RequirementItem(id="1", raw_text="x", normalized_text="", **base),
+        RequirementItem(id="2", raw_text="y", normalized_text="   ", **base),
+    ]
+    dedup = SemanticDeduplicator()
+    result = dedup.deduplicate(items)
+    assert len(result) == 2
 
 
 def test_extract_requirements_backward_compatible():
