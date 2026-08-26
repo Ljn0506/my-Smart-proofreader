@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import List
@@ -14,7 +15,14 @@ class JsonRequirementRepository(RequirementRepository):
     def __init__(self, base_dir: Path | None = None):
         self.base_dir = base_dir or Path("projects")
 
+    def _validate_project_id(self, project_id: str) -> None:
+        if not project_id:
+            raise ValueError("project_id cannot be empty")
+        if project_id in (".", "..") or "/" in project_id or "\\" in project_id or ".." in project_id:
+            raise ValueError(f"invalid project_id: {project_id!r}")
+
     def _project_dir(self, project_id: str) -> Path:
+        self._validate_project_id(project_id)
         return self.base_dir / project_id
 
     def create_project(self, project_id: str, name: str) -> ProjectMeta:

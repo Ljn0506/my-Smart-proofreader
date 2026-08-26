@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import sys
 import tempfile
 import uuid
@@ -61,6 +62,10 @@ ISSUE_TYPE_LABELS = {
 }
 
 
+# 上传文件安全上限：50 MB
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+
 def save_uploaded_files(uploaded_files: Sequence, subdir: str = "") -> List[Path]:
     """保存上传的多个文件到项目临时目录，返回路径列表。
 
@@ -82,6 +87,12 @@ def save_uploaded_files(uploaded_files: Sequence, subdir: str = "") -> List[Path
 
     paths: List[Path] = []
     for uploaded_file in uploaded_files:
+        if uploaded_file.size > _MAX_UPLOAD_BYTES:
+            raise RuntimeError(
+                f"上传文件 {uploaded_file.name} 大小为 "
+                f"{uploaded_file.size / (1024 * 1024):.1f} MB，超过上限 "
+                f"{_MAX_UPLOAD_BYTES / (1024 * 1024):.0f} MB。"
+            )
         safe_name = Path(uploaded_file.name).name
         unique_name = f"{uuid.uuid4().hex}_{safe_name}"
         path = tmp_dir / unique_name
@@ -143,8 +154,9 @@ def _prepare_batch_excel_download(batch_result: ProofreadBatchResult) -> bytes:
 def _download_link(data: bytes, file_name: str, mime: str, label: str, color: str = "#0d6efd") -> str:
     """生成基于 Base64 Data URI 的 HTML 下载链接，点击不触发 Streamlit rerun。"""
     b64 = base64.b64encode(data).decode()
+    safe_name = html.escape(file_name, quote=True)
     return (
-        f'<a href="data:{mime};base64,{b64}" download="{file_name}" '
+        f'<a href="data:{mime};base64,{b64}" download="{safe_name}" '
         f'style="display:inline-block; width:100%; text-align:center; padding:10px 16px; '
         f'background-color:{color}; color:white; text-decoration:none; border-radius:6px; '
         f'font-weight:500; box-sizing:border-box;" '

@@ -18,6 +18,33 @@ from proofreader.parsers.docx_parser import ParsedDocument, TextBlock
 logger = logging.getLogger(__name__)
 
 
+# 单张图片安全上限：20 MB / 2000 万像素；超过则跳过，避免 OCR 耗尽内存
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024
+_MAX_IMAGE_PIXELS = 20_000_000
+
+
+def _image_size_ok(blob: bytes) -> bool:
+    """粗略检查图片尺寸与字节数，拒绝超大图/解压炸弹。"""
+    if len(blob) > _MAX_IMAGE_BYTES:
+        return False
+    try:
+        with Image.open(io.BytesIO(blob)) as im:
+            if im.width * im.height > _MAX_IMAGE_PIXELS:
+                return False
+    except Exception:
+        # 无法识别的图片格式直接放行，后续 OCR 会失败
+        pass
+    return True
+
+
+def _safe_image_ext(ext: str | None) -> str:
+    """从 content-type 或外部输入得到的扩展名可能包含路径遍历字符，归一化为安全后缀。"""
+    if not ext:
+        return "png"
+    safe = re.sub(r"[^a-zA-Z0-9]", "", ext.split(";")[0])
+    return safe or "png"
+
+
 @dataclass
 class OcrIssue:
     """OCR 检查发现的问题。"""
@@ -220,10 +247,12 @@ def _extract_required_entities(requirements: List[RequirementItem]) -> Set[str]:
     """从需求中提取要求提供的证书、报告、资质等实体关键词。"""
     entities: Set[str] = set()
     for req in requirements:
-        text = req.text
+        # 与 OCR 结果做相同归一化后再匹配，避免空格/换行差异导致漏报
+        text = re.sub(r"\s+", "", req.text)
         for kw in _REPORT_CERTIFICATE_KEYWORDS:
-            if kw in text:
-                entities.add(kw)
+            normalized_kw = re.sub(r"\s+", "", kw)
+            if normalized_kw in text:
+                entities.add(normalized_kw)
     return entities
 
 
@@ -423,6 +452,10 @@ def check_images(
     block_by_index = {block.index: block for block in doc.blocks}
 
     for img in doc.images:
+        if not _image_size_ok(img.blob):
+            logger.warning("跳过超大图片 #%s（%s bytes）", img.image_index, len(img.blob))
+            continue
+
         ocr_text = engine.recognize(img.blob)
         if not ocr_text:
             continue
@@ -433,7 +466,7 @@ def check_images(
         section_reqs = [r for r in requirements if _context_compatible(r, context_block)]
         if not section_reqs:
             if debug:
-                image_path = output_dir / f"image_{img.image_index}.{img.ext or 'png'}"
+                image_path = output_dir / f"image_{img.image_index}.{_safe_image_ext(img.ext)}"
                 _write_image_blob(image_path, img.blob)
             continue
 
