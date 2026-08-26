@@ -300,8 +300,18 @@ def _match_and_compare_quantities(
                 j = available[0]
                 raw_bq = bid_quantities[j]
                 used_bid.add(j)
-                # 兜底匹配：将投标单位置空，触发 compare_quantity 不显示单位的逻辑
-                bid_qty = Quantity(raw_bq.value, "", raw_bq.direction, raw_bq.position, raw_bq.meta)
+                # 无同单位响应：按需求方向生成一条明确的不匹配消息
+                direction_text = {
+                    "ge": "不少于",
+                    "gt": "大于",
+                    "le": "不超过",
+                    "lt": "小于",
+                }.get(req_qty.direction, "为")
+                messages.append(
+                    f"要求 {direction_text} {req_qty.value:g}{req_qty.unit}，"
+                    f"投标未提供同单位响应（仅有 {raw_bq.value:g}{raw_bq.unit}）"
+                )
+                spans.append(f"{raw_bq.value:g}{raw_bq.unit}")
 
         if bid_qty is None:
             continue

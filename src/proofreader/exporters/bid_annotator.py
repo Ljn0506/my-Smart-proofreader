@@ -25,6 +25,10 @@ from proofreader.parsers.docx_parser import convert_doc_to_docx
 from proofreader.pipeline import ProofreadResult
 
 
+# 子序列匹配的最大文本长度；超过此长度时回退到线性贪心匹配，避免 O(n²) 拖垮导出
+_MAX_SUBSEQUENCE_TEXT_LEN = 2000
+
+
 # 偏离级别对应底纹颜色（十六进制）
 LEVEL_FILL_COLORS = {
     IssueLevel.ERROR: "F8D7DA",    # 浅红
@@ -144,10 +148,19 @@ def _find_shortest_subsequence_window(text: str, pattern: str) -> Tuple[int, int
 
     例如 text="前缀800并发用户后缀", pattern="800用户" → (2, 8)，
     对应窗口 "800并发用户"，允许少量修饰词位于数字与单位之间。
+
+    对超长文本回退到 O(n) 贪心子序列窗口，避免精心构造的长段落导致 O(n²) 挂起。
     """
     if not pattern or not text:
         return None
     n, m = len(text), len(pattern)
+    if n == 0 or m == 0 or m > n:
+        return None
+
+    # 超长文本：线性贪心取第一个满足的窗口
+    if n > _MAX_SUBSEQUENCE_TEXT_LEN:
+        return _greedy_subsequence_window(text, pattern)
+
     best: Tuple[int, int] | None = None
 
     for start in range(n):
@@ -165,6 +178,20 @@ def _find_shortest_subsequence_window(text: str, pattern: str) -> Tuple[int, int
         if best is None and p_idx < m:
             continue
     return best
+
+
+def _greedy_subsequence_window(text: str, pattern: str) -> Tuple[int, int] | None:
+    """O(n) 贪心找到 pattern 作为子序列在 text 中的第一个窗口。"""
+    p_idx = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == pattern[p_idx]:
+            if start == -1:
+                start = i
+            p_idx += 1
+            if p_idx == len(pattern):
+                return (start, i)
+    return None
 
 
 def _find_contiguous_span_in_runs(paragraph, span_text: str):
