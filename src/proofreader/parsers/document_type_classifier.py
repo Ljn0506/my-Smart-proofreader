@@ -19,7 +19,10 @@ _DOCUMENT_KEYWORDS = {
         ProcurementMethod.COMPETITIVE_NEGOTIATION: ["竞争性磋商", "磋商文件", "磋商邀请"],
         ProcurementMethod.TENDER: ["招标文件", "招标公告", "公开招标"],
         ProcurementMethod.SELECTION: ["遴选文件", "遴选"],
-        ProcurementMethod.OTHER: ["采购文件", "采购需求", "需求文件"],
+        ProcurementMethod.OTHER: ["采购文件"],
+    },
+    DocumentType.REQUIREMENT: {
+        ProcurementMethod.OTHER: ["采购需求", "需求文件", "需求说明书"],
     },
     DocumentType.BID_REGISTRATION: {
         ProcurementMethod.OTHER: ["报名文件", "报名资料", "报名登记表"],
@@ -87,10 +90,10 @@ def classify_document(
             result_method = "embedding"
 
     if confidence < 0.70 and use_llm:
-        doc_type = DocumentType.OTHER
-        method = ProcurementMethod.OTHER
-        confidence = 0.55
-        result_method = "llm"
+        raise NotImplementedError(
+            "LLM fallback for document classification is not implemented; "
+            "set use_llm=False or implement a local model backend."
+        )
 
     return DocumentClassificationResult(
         document_type=doc_type,
