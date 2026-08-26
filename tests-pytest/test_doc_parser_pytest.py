@@ -85,3 +85,14 @@ def test_parse_docx_para_index_maps_body_paragraphs(tmp_path: Path) -> None:
     assert len(table_blocks) == 2
     for block in table_blocks:
         assert block.para_index is None
+
+
+def test_parsed_document_has_classification(sample_docs_dir: Path) -> None:
+    """parse_docx 应附加文档类型与采购方式分类结果。"""
+    doc_path = sample_docs_dir / "requirements.docx"
+    if not doc_path.exists():
+        pytest.skip("sample requirements.docx not found")
+    parsed = parse_docx(doc_path)
+    assert parsed.doc_type is not None
+    assert parsed.procurement_method is not None
+    assert parsed.classification_confidence > 0
