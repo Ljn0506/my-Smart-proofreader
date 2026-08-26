@@ -49,3 +49,39 @@ def test_parse_doc_file_keeps_original_path(requirements_doc_path: Path) -> None
     """解析 .doc 后，ParsedDocument.path 应保留原始 .doc 路径。"""
     parsed = parse_docx(requirements_doc_path)
     assert parsed.path.suffix.lower() == ".doc"
+
+
+def test_parse_docx_para_index_maps_body_paragraphs(tmp_path: Path) -> None:
+    """paragraph/heading 块的 para_index 应与 Document.paragraphs 对齐，表格行为 None。"""
+    from docx import Document
+
+    doc_path = tmp_path / "para_index.docx"
+    doc = Document()
+    doc.add_paragraph("第一段")
+    doc.add_paragraph("")  # 空段落
+    doc.add_paragraph("第二段")
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "表头"
+    table.cell(0, 1).text = "值"
+    table.cell(1, 0).text = "项"
+    table.cell(1, 1).text = "数据"
+    doc.add_paragraph("第三段")
+    doc.save(doc_path)
+
+    parsed = parse_docx(doc_path)
+
+    # 段落块按 body paragraph 顺序出现，para_index 与 Document.paragraphs 一致
+    paragraph_blocks = [b for b in parsed.blocks if b.block_type in ("paragraph", "heading")]
+    assert len(paragraph_blocks) == 3
+    assert paragraph_blocks[0].text == "第一段"
+    assert paragraph_blocks[0].para_index == 0
+    assert paragraph_blocks[1].text == "第二段"
+    assert paragraph_blocks[1].para_index == 2  # 跳过了空段落 index 1
+    assert paragraph_blocks[2].text == "第三段"
+    assert paragraph_blocks[2].para_index == 3  # 表格不占 paragraph
+
+    # 表格行无 para_index
+    table_blocks = [b for b in parsed.blocks if b.block_type == "table_row"]
+    assert len(table_blocks) == 2
+    for block in table_blocks:
+        assert block.para_index is None

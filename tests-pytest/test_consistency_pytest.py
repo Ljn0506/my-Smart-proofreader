@@ -62,3 +62,76 @@ def test_check_consistency_generates_multiple_time_issues() -> None:
     issues = check_consistency([match])
     time_issues = [i for i in issues if i.issue_type == IssueType.TIME_MISMATCH]
     assert len(time_issues) == 2
+
+
+def test_check_consistency_detects_missing_proof() -> None:
+    """投标仅重复要求提供证书的需求原文时，应检出缺失证明。"""
+    req_text = "支持检测的漏洞数大于250000条，兼容CVE等主流标准，（提供CVE Compatible证书）。"
+    bid_text = "支持检测的漏洞数大于250000条，兼容CVE等主流标准，（提供CVE Compatible证书）。"
+    req = RequirementItem(item_id="R1", text=req_text)
+    bid_block = TextBlock(text=bid_text, block_type="heading", index=0)
+    match = MatchResult(
+        requirement=req,
+        matched_blocks=[(bid_block, 0.95)],
+        best_score=0.95,
+        match_type="exact",
+    )
+    issues = check_consistency([match])
+    proof_issues = [i for i in issues if i.issue_type == IssueType.KEYWORD_MISSING and "PROOF" in i.issue_id]
+    assert len(proof_issues) == 1
+    assert "CVE Compatible" in proof_issues[0].message
+    assert "未实际提供" in proof_issues[0].message
+
+
+def test_check_consistency_skips_proof_when_bid_asserts_compliance() -> None:
+    """投标方明确承诺满足/符合（如'了解并满足'）时，不应误判为缺失证明。"""
+    req_text = "不低于1个GE管理口，不低于4个千兆光口，（提供截图证明并加盖厂商公章）。"
+    bid_text = "了解并满足硬件规格及性能要求：1个RJ45串口，4个千兆光口，1个接口扩展槽位。"
+    req = RequirementItem(item_id="R1", text=req_text)
+    bid_block = TextBlock(text=bid_text, block_type="paragraph", index=0)
+    match = MatchResult(
+        requirement=req,
+        matched_blocks=[(bid_block, 0.9)],
+        best_score=0.9,
+        match_type="exact",
+    )
+    issues = check_consistency([match])
+    proof_issues = [i for i in issues if i.issue_type == IssueType.KEYWORD_MISSING and "PROOF" in i.issue_id]
+    assert len(proof_issues) == 0, f"不应把明确承诺满足的响应误判为缺失证明，实际生成：{proof_issues}"
+
+
+def test_check_consistency_detects_missing_entity() -> None:
+    """投标遗漏需求列出的某个硬件实体时，应检出。"""
+    req_text = "不低于1个RJ45串口，不低于1个GE管理口，不低于4个千兆光口，不低于1个接口扩展槽位。"
+    # 表格行格式：需求 | 响应 | 符合；响应中遗漏 GE管理口
+    bid_text = "1 | 不低于1个RJ45串口... | 1个RJ45串口，4个千兆光口，1个接口扩展槽位 | 符合"
+    req = RequirementItem(item_id="R1", text=req_text)
+    bid_block = TextBlock(text=bid_text, block_type="table_row", index=0)
+    match = MatchResult(
+        requirement=req,
+        matched_blocks=[(bid_block, 0.9)],
+        best_score=0.9,
+        match_type="exact",
+    )
+    issues = check_consistency([match])
+    entity_issues = [i for i in issues if i.issue_type == IssueType.KEYWORD_MISSING and "ENTITY" in i.issue_id]
+    assert len(entity_issues) == 1
+    assert "GE管理口" in entity_issues[0].message
+    assert "RJ45串口" not in entity_issues[0].message  # 已响应的不应被报缺失
+
+
+def test_check_consistency_skips_entity_when_all_present() -> None:
+    """投标完整响应所有实体时，不应误报。"""
+    req_text = "不低于1个RJ45串口，不低于1个GE管理口，不低于4个千兆光口。"
+    bid_text = "1 | ... | 1个RJ45串口，1个GE管理口，4个千兆光口 | 符合"
+    req = RequirementItem(item_id="R1", text=req_text)
+    bid_block = TextBlock(text=bid_text, block_type="table_row", index=0)
+    match = MatchResult(
+        requirement=req,
+        matched_blocks=[(bid_block, 0.9)],
+        best_score=0.9,
+        match_type="exact",
+    )
+    issues = check_consistency([match])
+    entity_issues = [i for i in issues if i.issue_type == IssueType.KEYWORD_MISSING and "ENTITY" in i.issue_id]
+    assert len(entity_issues) == 0

@@ -103,8 +103,8 @@ def _match_tables(
     try:
         all_sigs = req_signatures + bid_signatures
         matrix = vectorizer.fit_transform(all_sigs)
-        req_vectors = matrix[: len(req_tables)]
-        bid_vectors = matrix[len(req_tables) :]
+        req_vectors = matrix[:len(req_tables)]
+        bid_vectors = matrix[len(req_tables):]
         sim_matrix = cosine_similarity(req_vectors, bid_vectors)
     except ValueError:
         return []

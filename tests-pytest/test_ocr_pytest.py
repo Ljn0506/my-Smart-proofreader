@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from proofreader.checkers.ocr_checker import (
     OcrEngine,
     OcrIssue,
@@ -15,22 +17,29 @@ from proofreader.extractors.requirement_extractor import RequirementItem
 from proofreader.parsers.docx_parser import EmbeddedImage, ParsedDocument, TextBlock
 
 
-def test_ocr_caches_result_by_image_hash() -> None:
+@pytest.fixture(scope="session")
+def ocr_engine() -> OcrEngine:
+    """返回 OCR 引擎实例；若引擎不可用则跳过相关测试。"""
+    engine = OcrEngine()
+    if not engine.available:
+        pytest.skip("OCR 引擎不可用（可能依赖库或模型未正确加载）")
+    return engine
+
+
+def test_ocr_caches_result_by_image_hash(ocr_engine: OcrEngine) -> None:
     """对同一张图片多次识别应直接返回缓存结果。"""
     base = Path(__file__).parent.parent / "data" / "sample-docs"
     image_blob = (base / "sample_screenshot.png").read_bytes()
 
-    engine = OcrEngine()
-
     # 第一次识别
-    text1 = engine.recognize(image_blob)
+    text1 = ocr_engine.recognize(image_blob)
     assert text1 != ""
-    assert len(engine._result_cache) == 1
+    assert len(ocr_engine._result_cache) == 1
 
     # 第二次识别同一图片，应返回缓存结果
-    text2 = engine.recognize(image_blob)
+    text2 = ocr_engine.recognize(image_blob)
     assert text2 == text1
-    assert len(engine._result_cache) == 1
+    assert len(ocr_engine._result_cache) == 1
 
 
 def test_ocr_cache_respects_max_size() -> None:

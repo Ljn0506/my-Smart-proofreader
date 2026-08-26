@@ -9,9 +9,12 @@ from proofreader.pipeline import Proofreader
 
 def main():
     base = Path(__file__).parent.parent / "data" / "sample-docs"
-    result = Proofreader().proofread(base / "requirements.docx", base / "bid.docx")
+    proofreader = Proofreader()
+    result = proofreader.proofread(base / "requirements.docx", base / "bid.docx")
 
     print("=== 验证报告 ===\n")
+
+    ocr_available = proofreader.ocr_engine is not None and proofreader.ocr_engine.available
 
     checks = [
         ("备份周期不一致", lambda: any("7.0天" in i.message and "5.0天" in i.message for i in result.consistency_issues)),
@@ -24,8 +27,12 @@ def main():
             for i in result.consistency_issues
         )),
         ("错别字「架购」", lambda: any(typo.word == "架购" for typo in result.typo_issues)),
-        ("截图 OCR 检查", lambda: len(result.ocr_issues) >= 1),
     ]
+
+    if ocr_available:
+        checks.append(("截图 OCR 检查", lambda: len(result.ocr_issues) >= 1))
+    else:
+        print("⚠️  OCR 引擎不可用，跳过截图 OCR 检查\n")
 
     all_pass = True
     for name, check in checks:

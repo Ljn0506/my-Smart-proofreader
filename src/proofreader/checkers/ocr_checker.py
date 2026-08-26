@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +14,8 @@ from PIL import Image
 
 from proofreader.extractors.requirement_extractor import RequirementItem
 from proofreader.parsers.docx_parser import ParsedDocument, TextBlock
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,6 +52,16 @@ class OcrEngine:
         self._result_cache: Dict[str, str] = {}
         self._result_cache_size = max(1, result_cache_size)
         self._result_cache_keys: List[str] = []
+
+    @property
+    def available(self) -> bool:
+        """检查 OCR 引擎是否可用（依赖的库和模型能否正常加载）。"""
+        try:
+            self._get_reader()
+            return True
+        except Exception as exc:
+            logger.warning("OCR 引擎不可用：%s", exc)
+            return False
 
     def _get_reader(self):
         if self._reader is None:
@@ -88,7 +101,8 @@ class OcrEngine:
             text = "\n".join(result)
             self._cache_result(image_hash, text)
             return text
-        except Exception:
+        except Exception as exc:
+            logger.warning("OCR 识别失败：%s", exc)
             return ""
 
 
@@ -219,6 +233,13 @@ _QUANTITY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# 单位简写 -> 标准写法（小写），与 table_checker 保持一致
+_UNIT_ALIASES = {
+    "g": "gb",
+    "m": "mb",
+    "t": "tb",
+}
+
 
 def _extract_quantities(text: str) -> List[Tuple[float, str]]:
     """从文本中提取数值+单位组合，返回 [(数值, 小写单位)]。"""
@@ -226,7 +247,7 @@ def _extract_quantities(text: str) -> List[Tuple[float, str]]:
     for match in _QUANTITY_PATTERN.finditer(text):
         try:
             value = float(match.group(1))
-            unit = match.group(2).lower()
+            unit = _UNIT_ALIASES.get(match.group(2).lower(), match.group(2).lower())
             results.append((value, unit))
         except ValueError:
             continue

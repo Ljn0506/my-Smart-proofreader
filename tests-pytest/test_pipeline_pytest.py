@@ -36,9 +36,11 @@ def test_typo_issues_found(result: ProofreadResult) -> None:
 
 
 def test_ocr_issues_found(sample_docs_dir: Path) -> None:
-    """应检出至少 1 处截图 OCR 问题。"""
-    # 使用全新 Proofreader 实例，避免会话级 fixture 的 OCR 缓存影响本次断言
+    """应检出至少 1 处截图 OCR 问题；若 OCR 引擎不可用则跳过。"""
     proofreader = Proofreader()
+    if proofreader.ocr_engine is None or not proofreader.ocr_engine.available:
+        pytest.skip("OCR 引擎不可用，跳过截图检查断言")
+    # 使用全新 Proofreader 实例，避免会话级 fixture 的 OCR 缓存影响本次断言
     result = proofreader.proofread(
         sample_docs_dir / "requirements.docx",
         sample_docs_dir / "bid.docx",
