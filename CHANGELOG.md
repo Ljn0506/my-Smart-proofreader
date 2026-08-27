@@ -6,13 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Structured data models (`RequirementItem`, `CheckTarget`, `EvaluationRule`, `DocumentClassificationResult`) and shared enums for category, constraint type, review status, document type, and procurement method.
+- Introduces typed data models (`RequirementItem`, `CheckTarget`, `EvaluationRule`, `DocumentClassificationResult`) and shared enums so downstream checks operate on a consistent schema.
 - Document type classifier with rule-based confidence scoring, plus `DocumentType.REQUIREMENT` support for 采购需求/需求文件 documents.
-- Date normalizer for Chinese absolute dates, relative periods, and date ranges.
+- Date normalizer utility for Chinese absolute dates, relative periods, and date ranges (pipeline integration deferred).
 - `docx_parser` section inference, paragraph type classification, table type classification, heading-level inference, and single-pass parsing that populates blocks, headings, sections, raw tables, and embedded images in one read.
-- Extractor subsystem: numbered-paragraph, heading-based, table-row (with per-type strategies), composite extractor, semantic deduplicator, and scoring extractor that produces atomic scoring items and aggregate `EvaluationRule`s.
-- JSON-backed `RequirementRepository` with project metadata and path-traversal validation.
-- Tests covering models, parser, repository, extractors, semantic matcher, consistency checker, OCR checker, date normalizer, document classifier, and bid annotator.
+- Extractor subsystem: numbered-paragraph, heading-based, table-row (with per-type strategies), composite extractor, semantic deduplicator, and scoring extractor that produces atomic scoring items and aggregate `EvaluationRule`s (scoring rules are extracted but not yet consumed by the proofreading pipeline).
+- JSON-backed `RequirementRepository` for project metadata and requirement persistence, with path-traversal validation; parsed-document round-trip is stubbed for Phase 1.
+
+### For contributors
+
+- Added tests covering models, parser, repository, extractors, semantic matcher, consistency checker, OCR checker, date normalizer, document classifier, and bid annotator.
 
 ### Changed
 
