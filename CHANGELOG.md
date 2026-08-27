@@ -6,12 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Introduces typed data models (`RequirementItem`, `CheckTarget`, `EvaluationRule`, `DocumentClassificationResult`) and shared enums so downstream checks operate on a consistent schema.
-- Document type classifier with rule-based confidence scoring, plus `DocumentType.REQUIREMENT` support for 采购需求/需求文件 documents.
-- Date normalizer utility for Chinese absolute dates, relative periods, and date ranges (pipeline integration deferred).
-- `docx_parser` section inference, paragraph type classification, table type classification, heading-level inference, and single-pass parsing that populates blocks, headings, sections, raw tables, and embedded images in one read.
-- Extractor subsystem: numbered-paragraph, heading-based, table-row (with per-type strategies), composite extractor, semantic deduplicator, and scoring extractor that produces atomic scoring items and aggregate `EvaluationRule`s (scoring rules are extracted but not yet consumed by the proofreading pipeline).
-- JSON-backed `RequirementRepository` for project metadata and requirement persistence, with path-traversal validation; parsed-document round-trip is stubbed for Phase 1.
+- Typed data models (`RequirementItem`, `CheckTarget`, `EvaluationRule`, `DocumentClassificationResult`) and shared enums now give downstream checks a consistent schema.
+- Documents are now classified by type with rule-based confidence, including `DocumentType.REQUIREMENT` for 采购需求/需求文件 files.
+- Chinese absolute dates, relative periods, and date ranges can now be normalized via the date-normalizer utility (pipeline integration deferred).
+- The Word parser now infers sections, classifies paragraphs and tables, infers heading levels, and builds blocks, headings, sections, raw tables, and embedded images in a single pass.
+- A new extractor subsystem pulls requirements from numbered paragraphs, headings, and table rows (with per-type strategies), deduplicates them semantically, and extracts scoring items plus aggregate `EvaluationRule`s (scoring rules are extracted but not yet consumed by the proofreading pipeline).
+- Projects can now persist metadata and requirements in a JSON-backed `RequirementRepository`, with path-traversal validation; parsed-document round-trip is stubbed for Phase 1.
 
 ### For contributors
 

@@ -86,6 +86,11 @@ smart-proofreader/
 - pydantic（数据模型校验）
 - openpyxl（Excel 报告导出）
 
+## 相关文档
+
+- 产品构思、框架设计与接口对齐文档见 [`docs/superpowers/specs/`](docs/superpowers/specs/)。
+- 实施计划与后续路线图见 [`docs/superpowers/plans/`](docs/superpowers/plans/)。
+
 ## 注意事项
 
 - OCR 首次运行会自动下载 easyocr 模型，需要联网。
