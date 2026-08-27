@@ -368,6 +368,9 @@ def match_requirements_to_bid(
         bid_blocks = [b for sec in bid_sections for b in sec.blocks if _keep_block(b)]
 
     bid_texts = [b.text for b in bid_blocks]
+    if not bid_blocks:
+        return [MatchResult(req, [], 0.0, "none") for req in requirements]
+
     vectorizer, bid_vectors = _get_bid_vectors(tuple(bid_texts))
 
     # 处理空投标向量（无法向量化时返回兜底结果）

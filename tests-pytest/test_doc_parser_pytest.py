@@ -92,6 +92,55 @@ def test_parse_docx_rejects_oversized_file(tmp_path: Path) -> None:
         parse_docx(huge)
 
 
+def test_convert_doc_to_docx_raises_when_soffice_missing(tmp_path: Path, monkeypatch) -> None:
+    """未安装 LibreOffice 时应给出清晰错误。"""
+    import shutil
+    import subprocess
+
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    fake_doc = tmp_path / "fake.doc"
+    fake_doc.write_bytes(b"fake")
+
+    with pytest.raises(RuntimeError, match="未找到 LibreOffice"):
+        convert_doc_to_docx(fake_doc, tmp_path)
+
+
+def test_convert_doc_to_docx_raises_on_subprocess_failure(tmp_path: Path, monkeypatch) -> None:
+    """LibreOffice 转换失败时应抛出 RuntimeError。"""
+    import shutil
+    import subprocess
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/soffice")
+
+    def _failing_run(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(1, cmd=["soffice"], stderr=b"conversion failed")
+
+    monkeypatch.setattr(subprocess, "run", _failing_run)
+    fake_doc = tmp_path / "fake.doc"
+    fake_doc.write_bytes(b"fake")
+
+    with pytest.raises(RuntimeError, match="转换 .doc 文件失败"):
+        convert_doc_to_docx(fake_doc, tmp_path)
+
+
+def test_convert_doc_to_docx_raises_on_timeout(tmp_path: Path, monkeypatch) -> None:
+    """LibreOffice 转换超时时应抛出 RuntimeError。"""
+    import shutil
+    import subprocess
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/soffice")
+
+    def _timeout_run(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["soffice"], timeout=120)
+
+    monkeypatch.setattr(subprocess, "run", _timeout_run)
+    fake_doc = tmp_path / "fake.doc"
+    fake_doc.write_bytes(b"fake")
+
+    with pytest.raises(RuntimeError, match="转换 .doc 文件超时"):
+        convert_doc_to_docx(fake_doc, tmp_path)
+
+
 def test_parsed_document_has_classification(sample_docs_dir: Path) -> None:
     """parse_docx 应附加文档类型与采购方式分类结果。"""
     doc_path = sample_docs_dir / "requirements.docx"

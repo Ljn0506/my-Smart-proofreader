@@ -62,3 +62,35 @@ def test_repo_load_bad_schema_raises():
         path.write_text('{"schema_version": "2.0", "items": []}', encoding="utf-8")
         with pytest.raises(ValueError):
             repo.load_requirements("p")
+
+
+def test_repo_load_corrupt_json_raises():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = JsonRequirementRepository(base_dir=Path(tmp))
+        repo.create_project("p", "n")
+        path = Path(tmp) / "p" / "requirements.json"
+        path.write_text("not valid json", encoding="utf-8")
+        with pytest.raises(ValueError):
+            repo.load_requirements("p")
+
+
+def test_save_parsed_writes_paths():
+    from proofreader.parsers.docx_parser import ParsedDocument
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = JsonRequirementRepository(base_dir=Path(tmp))
+        repo.create_project("p", "n")
+        doc = ParsedDocument(path=Path("/tmp/test.docx"))
+        repo.save_parsed("p", [doc])
+        parsed_path = Path(tmp) / "p" / "parsed" / "parsed_documents.json"
+        assert parsed_path.exists()
+        data = json.loads(parsed_path.read_text(encoding="utf-8"))
+        assert data == [{"path": "/tmp/test.docx"}]
+
+
+def test_load_parsed_raises_not_implemented():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = JsonRequirementRepository(base_dir=Path(tmp))
+        repo.create_project("p", "n")
+        with pytest.raises(NotImplementedError):
+            repo.load_parsed("p")
