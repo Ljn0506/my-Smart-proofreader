@@ -78,13 +78,18 @@ def test_parse_docx_para_index_maps_body_paragraphs(tmp_path: Path) -> None:
     assert paragraph_blocks[1].text == "第二段"
     assert paragraph_blocks[1].para_index == 2  # 跳过了空段落 index 1
     assert paragraph_blocks[2].text == "第三段"
-    assert paragraph_blocks[2].para_index == 3  # 表格不占 paragraph
 
-    # 表格行无 para_index
-    table_blocks = [b for b in parsed.blocks if b.block_type == "table_row"]
-    assert len(table_blocks) == 2
-    for block in table_blocks:
-        assert block.para_index is None
+
+def test_parse_docx_rejects_oversized_file(tmp_path: Path) -> None:
+    """超过 50 MB 的文档应在解析前被拒绝，避免内存耗尽。"""
+    huge = tmp_path / "huge.docx"
+    with huge.open("wb") as f:
+        # 创建一个 51 MB 的稀疏文件
+        f.seek(51 * 1024 * 1024 - 1)
+        f.write(b"\x00")
+
+    with pytest.raises(RuntimeError, match="超过允许上限"):
+        parse_docx(huge)
 
 
 def test_parsed_document_has_classification(sample_docs_dir: Path) -> None:

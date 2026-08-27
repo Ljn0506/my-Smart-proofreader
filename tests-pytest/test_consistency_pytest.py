@@ -3,9 +3,15 @@ from __future__ import annotations
 
 from proofreader.checkers.consistency_checker import (
     IssueType,
+    Quantity,
+    UnitMeta,
     _compare_numbers,
     _compare_time,
+    _expand_multiplication,
+    _extract_number_quantities,
+    _match_and_compare_quantities,
     check_consistency,
+    compare_quantity,
 )
 from proofreader.extractors.requirement_extractor import RequirementItem
 from proofreader.matchers.semantic_matcher import MatchResult
@@ -135,3 +141,42 @@ def test_check_consistency_skips_entity_when_all_present() -> None:
     issues = check_consistency([match])
     entity_issues = [i for i in issues if i.issue_type == IssueType.KEYWORD_MISSING and "ENTITY" in i.issue_id]
     assert len(entity_issues) == 0
+
+
+def test_compare_quantity_gt_lt_directions() -> None:
+    """compare_quantity 应支持 gt/lt 方向。"""
+    meta = UnitMeta("metric", default_direction="ge")
+    req_gt = Quantity(value=100.0, unit="人", direction="gt", position=0, meta=meta)
+    req_lt = Quantity(value=100.0, unit="人", direction="lt", position=0, meta=meta)
+
+    # gt: 101 通过，100 失败
+    passed, _, _ = compare_quantity(req_gt, Quantity(value=101.0, unit="人", direction="gt", position=0, meta=meta))
+    assert passed is True
+    passed, _, _ = compare_quantity(req_gt, Quantity(value=100.0, unit="人", direction="gt", position=0, meta=meta))
+    assert passed is False
+
+    # lt: 99 通过，100 失败
+    passed, _, _ = compare_quantity(req_lt, Quantity(value=99.0, unit="人", direction="lt", position=0, meta=meta))
+    assert passed is True
+    passed, _, _ = compare_quantity(req_lt, Quantity(value=100.0, unit="人", direction="lt", position=0, meta=meta))
+    assert passed is False
+
+
+def test_match_and_compare_quantities_cross_unit_fallback() -> None:
+    """无同单位投标响应时应生成明确的单位不匹配消息。"""
+    meta = UnitMeta("metric", default_direction="ge")
+    req = [Quantity(value=100.0, unit="用户", direction="ge", position=0, meta=meta)]
+    bid = [Quantity(value=80.0, unit="人", direction="ge", position=0, meta=meta)]
+    msgs, spans = _match_and_compare_quantities(req, bid)
+    assert len(msgs) == 1
+    assert "用户" in msgs[0]
+    assert "人" in msgs[0]
+    assert "80人" in spans
+
+
+def test_expand_multiplication_extracts_product() -> None:
+    """8*8TB 这类乘法表达式应被展开，便于后续数值提取。"""
+    expanded = _expand_multiplication("总容量 8*8TB，共 64TB")
+    assert "64TB" in expanded
+    quantities = _extract_number_quantities(expanded)
+    assert any(q.value == 64.0 and q.unit.lower() == "tb" for q in quantities)

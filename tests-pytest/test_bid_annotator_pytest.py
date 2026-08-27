@@ -580,3 +580,17 @@ class _FakeTextBlock:
         self.para_index = para_index
         self.block_type = "paragraph"
         self.text = "投标响应文字"
+
+
+def test_find_shortest_subsequence_window_long_fallback() -> None:
+    """超长文本应回退到 O(n) 贪心子序列窗口，避免 O(n²) 挂起。"""
+    from proofreader.exporters.bid_annotator import _find_shortest_subsequence_window
+
+    # 构造长度超过 _MAX_SUBSEQUENCE_TEXT_LEN 的文本
+    filler = "x" * 2100
+    text = f"前缀{filler}目标开始{'间隔' * 10}结束{filler}后缀"
+    window = _find_shortest_subsequence_window(text, "目标开始结束")
+    assert window is not None
+    start, end = window
+    assert text[start:end + 1].startswith("目标开始")
+    assert "结束" in text[start:end + 1]

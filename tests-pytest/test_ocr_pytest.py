@@ -11,6 +11,8 @@ from proofreader.checkers.ocr_checker import (
     _check_ocr_quantity_mismatches,
     _extract_required_entities,
     _extract_relevant_keywords,
+    _image_size_ok,
+    _safe_image_ext,
     check_images,
 )
 from proofreader.extractors.requirement_extractor import RequirementItem
@@ -325,3 +327,29 @@ def test_check_images_detects_parameter_mismatch_in_screenshot(tmp_path: Path) -
     assert len(issues) == 1
     assert len(issues[0].parameter_mismatches) > 0
     assert any("1000" in m and "800" in m for m in issues[0].parameter_mismatches)
+
+
+def test_image_size_ok_rejects_oversized(tmp_path: Path) -> None:
+    """超大字节数或像素数的图片应被过滤，避免 OCR 耗尽内存。"""
+    from PIL import Image
+
+    # 超过像素上限（构造一个 3000x8000 的图）
+    huge_path = tmp_path / "huge.png"
+    Image.new("RGB", (3000, 8000), color=(255, 0, 0)).save(huge_path)
+    assert _image_size_ok(huge_path.read_bytes()) is False
+
+    # 正常小图应通过
+    small_path = tmp_path / "small.png"
+    Image.new("RGB", (100, 100), color=(0, 255, 0)).save(small_path)
+    assert _image_size_ok(small_path.read_bytes()) is True
+
+
+def test_safe_image_ext_normalizes_traversal() -> None:
+    """图片扩展名应被归一化，拒绝路径遍历与非法字符。"""
+    assert _safe_image_ext("jpg") == "jpg"
+    assert _safe_image_ext("PNG") == "PNG"
+    assert _safe_image_ext("../../etc/passwd") == "etcpasswd"
+    # 分号后的内容被截断，再过滤非法字符
+    assert _safe_image_ext("png;drop table") == "png"
+    assert _safe_image_ext(None) == "png"
+    assert _safe_image_ext("") == "png"
