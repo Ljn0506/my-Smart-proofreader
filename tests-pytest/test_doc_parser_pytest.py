@@ -13,18 +13,20 @@ from proofreader.parsers.docx_parser import (
 
 
 @pytest.fixture(scope="module")
-def requirements_doc_path(sample_docs_dir: Path) -> Path:
-    """返回需求文件的 .doc 版本路径（如不存在则跳过）。"""
+def requirements_doc_path(sample_docs_dir: Path, soffice_available: bool) -> Path:
+    """返回需求文件的 .doc 版本路径（如不可用则跳过）。"""
+    if not soffice_available:
+        pytest.skip("LibreOffice/soffice 不可用，跳过 .doc 相关测试")
     path = sample_docs_dir / "requirements.doc"
     if not path.exists():
         pytest.skip("未找到 .doc 样例文件，跳过 .doc 相关测试")
     return path
 
 
-def test_soffice_is_available() -> None:
-    """当前环境应能找到 LibreOffice/soffice 命令；否则跳过 .doc 测试。"""
-    if find_soffice() is None:
-        pytest.skip("未找到 soffice/libreoffice，跳过 .doc 转换测试")
+def test_soffice_is_available(soffice_available: bool) -> None:
+    """当前环境应能找到可用的 LibreOffice/soffice 命令；否则跳过 .doc 测试。"""
+    if not soffice_available:
+        pytest.skip("未找到可用的 soffice/libreoffice，跳过 .doc 转换测试")
 
 
 def test_convert_doc_to_docx(requirements_doc_path: Path, tmp_path: Path) -> None:

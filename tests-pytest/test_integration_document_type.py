@@ -19,7 +19,9 @@ def tender_doc_path():
     return Path(os.environ.get("SMART_PROOFREADER_TENDER_DOC", _DEFAULT_TENDER_DOC))
 
 
-def test_real_tender_classification_and_scoring(tender_doc_path, tmp_path):
+def test_real_tender_classification_and_scoring(tender_doc_path, tmp_path, soffice_available):
+    if not soffice_available:
+        pytest.skip("LibreOffice/soffice 不可用，跳过真实 .doc 文件测试")
     if not tender_doc_path.exists():
         pytest.skip("Real tender doc not found")
     parsed = parse_docx(tender_doc_path)

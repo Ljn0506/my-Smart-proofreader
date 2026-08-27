@@ -64,8 +64,12 @@ def test_proofreader_runs_on_real_files(sample_docs_dir: Path, proofreader: Proo
     assert result.bid_doc.path.exists()
 
 
-def test_proofreader_runs_on_doc_files(sample_docs_dir: Path, proofreader: Proofreader) -> None:
+def test_proofreader_runs_on_doc_files(
+    sample_docs_dir: Path, proofreader: Proofreader, soffice_available: bool
+) -> None:
     """确保能直接对真实 .doc 文件执行校对。"""
+    if not soffice_available:
+        pytest.skip("LibreOffice/soffice 不可用，跳过 .doc 文件测试")
     req_doc_path = sample_docs_dir / "requirements.doc"
     if not req_doc_path.exists():
         pytest.skip("未找到 .doc 样例文件，跳过本测试")
