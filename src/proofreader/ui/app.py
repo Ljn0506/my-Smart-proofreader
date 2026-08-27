@@ -274,12 +274,15 @@ def _render_issue_card_inline(issue: ConsistencyIssue) -> None:
         '<div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">'
         f'<span style="background:{color}; color:white; padding:2px 10px; '
         f'border-radius:12px; font-size:12px;">{level_text}</span>'
-        f'<span style="font-weight:bold; font-size:15px;">[{type_text}] {issue.issue_id}</span>'
+        f'<span style="font-weight:bold; font-size:15px;">[{type_text}] {html.escape(issue.issue_id)}</span>'
         "</div>",
         unsafe_allow_html=True,
     )
     st.markdown(f"**偏离说明：**{issue.message}")
-    st.markdown(f"<span style='color:#666;'>**建议：**{issue.suggestion}</span>", unsafe_allow_html=True)
+    st.markdown(
+        f"<span style='color:#666;'>**建议：**{html.escape(issue.suggestion)}</span>",
+        unsafe_allow_html=True,
+    )
 
     req_html, bid_html = highlight_differences(issue.requirement_text, issue.bid_text or "")
     c1, c2 = st.columns(2)

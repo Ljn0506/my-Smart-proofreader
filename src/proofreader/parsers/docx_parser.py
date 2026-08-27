@@ -514,4 +514,6 @@ def parse_docx_with_sections(path: Path | str) -> ParsedDocument:
     现在与 _parse_docx_document 共享同一次解析，避免重复读取和解析 docx。
     """
     path = Path(path)
-    return _parse_docx_document(path, path)
+    doc = _parse_docx_document(path, path)
+    _attach_classification(doc)
+    return doc

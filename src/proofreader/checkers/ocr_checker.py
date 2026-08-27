@@ -505,7 +505,7 @@ def check_images(
         should_report = bool(missing_entities) or bool(parameter_mismatches)
         report_coverage = low_coverage and should_report
 
-        image_path = output_dir / f"image_{img.image_index}.{img.ext or 'png'}"
+        image_path = output_dir / f"image_{img.image_index}.{_safe_image_ext(img.ext)}"
 
         if should_report:
             if not _write_image_blob(image_path, img.blob):
