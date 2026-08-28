@@ -60,7 +60,11 @@ class NumberedParagraphExtractor(BaseExtractor):
             return RequirementCategory.PERFORMANCE
         if any(k in t for k in ["付款", "报价", "金额", "价格"]):
             return RequirementCategory.COMMERCIAL
-        return RequirementCategory.TECHNICAL
+        if any(k in t for k in ["评分", "分值", "打分"]):
+            return RequirementCategory.SCORING
+        if any(k in t for k in ["格式", "封装", "排版", "字体", "页码"]):
+            return RequirementCategory.FORMAT
+        return RequirementCategory.OTHER
 
     def _infer_constraint(self, text: str) -> ConstraintType:
         if "★" in text:
@@ -71,7 +75,9 @@ class NumberedParagraphExtractor(BaseExtractor):
             return ConstraintType.MANDATORY
         if any(k in text for k in ["建议", "可", "宜"]):
             return ConstraintType.RECOMMENDED
-        return ConstraintType.MANDATORY
+        if any(k in text for k in ["参考", "仅供参考", "参照"]):
+            return ConstraintType.REFERENCE
+        return ConstraintType.REFERENCE
 
     def _generate_id(self, section: DocumentSection, para: TextBlock) -> str:
         prefix = heading_prefix(section)
