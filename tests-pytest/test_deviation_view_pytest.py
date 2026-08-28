@@ -1,13 +1,9 @@
 """偏离分析界面与高亮函数测试。"""
 from __future__ import annotations
 
-from proofreader.checkers.consistency_checker import (
-    IssueLevel,
-    IssueType,
-    check_consistency,
-)
+from proofreader.checkers.consistency_checker import check_consistency
 from proofreader.extractors.requirement_extractor import RequirementItem
-from proofreader.matchers.semantic_matcher import MatchResult, match_requirements_to_bid
+from proofreader.matchers.semantic_matcher import MatchResult
 from proofreader.parsers.docx_parser import TextBlock
 from proofreader.ui.highlighting import add_highlights, highlight_differences, html_escape
 

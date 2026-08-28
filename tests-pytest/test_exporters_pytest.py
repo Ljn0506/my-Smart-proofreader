@@ -6,12 +6,12 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from proofreader.exporters import export_batch_to_excel, export_to_excel
-from proofreader.pipeline import ProofreadBatchResult, ProofreadResult
+from proofreader.pipeline import ProofreadResult
 
 
-def test_export_to_excel_creates_file(sample_result: ProofreadResult) -> None:
+def test_export_to_excel_creates_file(sample_result: ProofreadResult, tmp_path: Path) -> None:
     """Excel 导出应生成可读取的 xlsx 文件。"""
-    output = Path("/tmp/test_report.xlsx")
+    output = tmp_path / "test_report.xlsx"
     export_to_excel(sample_result, output)
 
     assert output.exists()
@@ -26,8 +26,6 @@ def test_export_to_excel_creates_file(sample_result: ProofreadResult) -> None:
     ws = wb["一致性偏离"]
     rows = list(ws.iter_rows(values_only=True))
     assert len(rows) >= 2  # 表头 + 至少一行数据
-
-    output.unlink(missing_ok=True)
 
 
 def test_export_batch_to_excel_creates_file(sample_result: ProofreadResult, tmp_path: Path) -> None:

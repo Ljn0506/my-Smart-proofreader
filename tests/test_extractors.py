@@ -1,0 +1,379 @@
+from __future__ import annotations
+
+from proofreader.extractors.base import BaseExtractor
+from proofreader.extractors.composite_extractor import CompositeExtractor
+from proofreader.extractors.deduplicator import SemanticDeduplicator
+from proofreader.extractors.heading_based_extractor import HeadingBasedExtractor
+from proofreader.extractors.numbered_paragraph_extractor import NumberedParagraphExtractor
+from proofreader.extractors.table_row_extractor import TableRowExtractor
+from proofreader.models.requirements import CheckMethod, ConstraintType, RequirementCategory, RequirementItem
+from proofreader.parsers.docx_parser import DocumentSection, DocumentSectionType, ParagraphType, ParsedDocument, ParsedTable, TextBlock
+
+
+class DummyExtractor(BaseExtractor):
+    def extract_from_section(self, section, doc):
+        if section.section_type == DocumentSectionType.REQUIREMENTS:
+            return [RequirementItem(id="DUMMY-1", source_doc="test", chapter_path=["1"], raw_text="dummy", normalized_text="dummy", category=RequirementCategory.TECHNICAL, constraint_type=ConstraintType.MANDATORY, check_method="rule", extracted_by="dummy")]
+        return []
+
+
+def test_composite_extractor_skips_bid_template():
+    doc = ParsedDocument(path="test.docx", doc_type="tender_document", title=None, sections=[], blocks=[], headings=[], raw_tables=[])
+    doc.sections = [
+        DocumentSection(DocumentSectionType.REQUIREMENTS, "需求", 1, 0, 10, ["需求"], [], []),
+        DocumentSection(DocumentSectionType.BID_TEMPLATE, "响应模板", 1, 10, 20, ["响应模板"], [], []),
+    ]
+    extractor = CompositeExtractor(extractors=[DummyExtractor()])
+    items = extractor.extract(doc)
+    assert len(items) == 1
+    assert items[0].id == "DUMMY-1"
+
+
+def test_composite_extractor_deduplicates_by_id():
+    class DuplicateExtractor(BaseExtractor):
+        def extract_from_section(self, section, doc):
+            return [
+                RequirementItem(id="DUP-1", source_doc="test", chapter_path=["1"], raw_text="a", normalized_text="a", category=RequirementCategory.TECHNICAL, constraint_type=ConstraintType.MANDATORY, check_method="rule", extracted_by="dup"),
+                RequirementItem(id="DUP-1", source_doc="test", chapter_path=["1"], raw_text="a", normalized_text="a", category=RequirementCategory.TECHNICAL, constraint_type=ConstraintType.MANDATORY, check_method="rule", extracted_by="dup"),
+                RequirementItem(id="DUP-2", source_doc="test", chapter_path=["2"], raw_text="b", normalized_text="b", category=RequirementCategory.COMMERCIAL, constraint_type=ConstraintType.RECOMMENDED, check_method="rule", extracted_by="dup"),
+            ]
+
+    doc = ParsedDocument(path="test.docx", doc_type="tender_document", title=None, sections=[], blocks=[], headings=[], raw_tables=[])
+    doc.sections = [DocumentSection(DocumentSectionType.REQUIREMENTS, "需求", 1, 0, 10, ["需求"], [], [])]
+    extractor = CompositeExtractor(extractors=[DuplicateExtractor()])
+    items = extractor.extract(doc)
+    assert len(items) == 2
+    assert {item.id for item in items} == {"DUP-1", "DUP-2"}
+
+
+def test_numbered_paragraph_extractor():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "需求",
+        1,
+        0,
+        10,
+        ["需求"],
+        paragraphs=[
+            TextBlock("1. 服务期限：合同签订起12个月。", "paragraph", paragraph_type=ParagraphType.NUMBERED_REQUIREMENT, index=0),
+            TextBlock("详见招标文件", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=1),
+        ],
+        tables=[],
+    )
+    extractor = NumberedParagraphExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) == 1
+    assert "12个月" in items[0].raw_text
+    assert items[0].category == RequirementCategory.DELIVERY
+    assert items[0].constraint_type == ConstraintType.MANDATORY
+
+
+def test_heading_based_extractor():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "2.1 桌面运维服务",
+        2,
+        0,
+        10,
+        ["二、运维服务需求", "2.1 桌面运维服务"],
+        paragraphs=[
+            TextBlock("现需配备3名驻场人员。", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=0),
+        ],
+        tables=[],
+    )
+    extractor = HeadingBasedExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) >= 1
+    assert any("驻场人员" in item.raw_text for item in items)
+
+
+def test_heading_based_extractor_empty_title_returns_empty():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "",
+        2,
+        0,
+        10,
+        ["二、运维服务需求"],
+        paragraphs=[
+            TextBlock("现需配备3名驻场人员。", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=0),
+        ],
+        tables=[],
+    )
+    extractor = HeadingBasedExtractor()
+    assert extractor.extract_from_section(section, None) == []
+
+
+def test_heading_based_extractor_short_paragraphs_returns_empty():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "2.1 桌面运维服务",
+        2,
+        0,
+        10,
+        ["二、运维服务需求", "2.1 桌面运维服务"],
+        paragraphs=[
+            TextBlock("短文本。", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=0),
+            TextBlock("plain text", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=1),
+        ],
+        tables=[],
+    )
+    extractor = HeadingBasedExtractor()
+    assert extractor.extract_from_section(section, None) == []
+
+
+def test_heading_based_extractor_accepts_none_doc():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "2.1 桌面运维服务",
+        2,
+        0,
+        10,
+        ["二、运维服务需求", "2.1 桌面运维服务"],
+        paragraphs=[
+            TextBlock("现需配备3名驻场人员。", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=0),
+        ],
+        tables=[],
+    )
+    extractor = HeadingBasedExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) == 1
+    assert items[0].source_doc == ""
+
+
+def test_numbered_paragraph_extractor_skips_short_text():
+    """编号段落文本过短（少于 5 字符）时应被跳过。"""
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "需求",
+        1,
+        0,
+        10,
+        ["需求"],
+        paragraphs=[
+            TextBlock("1. x", "paragraph", paragraph_type=ParagraphType.NUMBERED_REQUIREMENT, index=0),
+        ],
+        tables=[],
+    )
+    extractor = NumberedParagraphExtractor()
+    assert extractor.extract_from_section(section, None) == []
+
+
+def test_heading_based_extractor_skips_non_plain_and_short():
+    """非正文段落与短段落不应被提取为独立需求。"""
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "2.1 桌面运维服务",
+        2,
+        0,
+        10,
+        ["二、运维服务需求", "2.1 桌面运维服务"],
+        paragraphs=[
+            TextBlock("1. 编号项", "paragraph", paragraph_type=ParagraphType.NUMBERED_REQUIREMENT, index=0),
+            TextBlock("短。", "paragraph", paragraph_type=ParagraphType.PLAIN_TEXT, index=1),
+        ],
+        tables=[],
+    )
+    extractor = HeadingBasedExtractor()
+    assert extractor.extract_from_section(section, None) == []
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "技术指标",
+        2,
+        0,
+        10,
+        ["技术指标"],
+        paragraphs=[],
+        tables=[
+            ParsedTable(
+                table_type="technical_spec",
+                header=["指标项", "技术要求"],
+                rows=[["系统可用性", "不低于99.9%"]],
+                index=0,
+            )
+        ],
+    )
+    extractor = TableRowExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) == 1
+    assert items[0].category == RequirementCategory.TECHNICAL
+    assert "99.9%" in items[0].raw_text
+    assert items[0].stable_hash is not None
+    assert len(items[0].stable_hash) == 16
+
+
+def test_table_row_extractor_service_list():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "服务清单",
+        2,
+        0,
+        10,
+        ["服务清单"],
+        paragraphs=[],
+        tables=[
+            ParsedTable(
+                table_type="service_list",
+                header=["服务内容", "数量", "单位"],
+                rows=[["桌面运维", "3", "人"]],
+                index=0,
+            )
+        ],
+    )
+    extractor = TableRowExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) == 1
+    assert items[0].category == RequirementCategory.DELIVERY
+    assert items[0].raw_text == "桌面运维 | 3 | 人"
+
+
+def test_table_row_extractor_qualification():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "资质要求",
+        2,
+        0,
+        10,
+        ["资质要求"],
+        paragraphs=[],
+        tables=[
+            ParsedTable(
+                table_type="qualification",
+                header=["资质项", "要求"],
+                rows=[["营业执照", "有效期内"]],
+                index=0,
+            )
+        ],
+    )
+    extractor = TableRowExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) == 1
+    assert items[0].category == RequirementCategory.QUALIFICATION
+    assert "营业执照" in items[0].raw_text
+
+
+def test_table_row_extractor_scoring():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "评分标准",
+        2,
+        0,
+        10,
+        ["评分标准"],
+        paragraphs=[],
+        tables=[
+            ParsedTable(
+                table_type="evaluation",
+                header=["评分项", "分值"],
+                rows=[["技术方案", "30"]],
+                index=0,
+            )
+        ],
+    )
+    extractor = TableRowExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert len(items) == 1
+    assert items[0].category == RequirementCategory.SCORING
+    assert items[0].constraint_type == ConstraintType.SCORING
+
+
+def test_table_row_extractor_unknown_type_returns_empty():
+    section = DocumentSection(
+        DocumentSectionType.REQUIREMENTS,
+        "其他",
+        2,
+        0,
+        10,
+        ["其他"],
+        paragraphs=[],
+        tables=[
+            ParsedTable(
+                table_type="unknown",
+                header=["列1", "列2"],
+                rows=[["a", "b"]],
+                index=0,
+            )
+        ],
+    )
+    extractor = TableRowExtractor()
+    items = extractor.extract_from_section(section, None)
+    assert items == []
+
+
+def test_semantic_deduplicator():
+    base = dict(
+        source_doc="test.docx",
+        chapter_path=["1"],
+        category=RequirementCategory.TECHNICAL,
+        constraint_type=ConstraintType.MANDATORY,
+        check_method=CheckMethod.RULE,
+        extracted_by="rule",
+    )
+    items = [
+        RequirementItem(id="A", raw_text="系统可用性不低于 99.9%", normalized_text="系统可用性不低于99.9%", **base),
+        RequirementItem(id="B", raw_text="系统可用性不低于99.9%", normalized_text="系统可用性不低于99.9%", **base),
+    ]
+    dedup = SemanticDeduplicator(threshold=0.95)
+    result = dedup.deduplicate(items)
+    assert len(result) == 1
+
+
+def test_deduplicator_handles_empty_and_single():
+    """空列表与单元素列表应原样返回，避免边界异常。"""
+    base = dict(
+        source_doc="s.docx",
+        chapter_path=["c"],
+        category=RequirementCategory.TECHNICAL,
+        constraint_type=ConstraintType.MANDATORY,
+        check_method=CheckMethod.RULE,
+        extracted_by="rule",
+    )
+    dedup = SemanticDeduplicator()
+    assert dedup.deduplicate([]) == []
+    item = RequirementItem(
+        id="1",
+        raw_text="x",
+        normalized_text="x",
+        **base,
+    )
+    assert dedup.deduplicate([item]) == [item]
+
+
+def test_deduplicator_handles_empty_normalized_text():
+    """normalized_text 为空或仅空白时应被安全跳过，不抛异常。"""
+    base = dict(
+        source_doc="s.docx",
+        chapter_path=["c"],
+        category=RequirementCategory.TECHNICAL,
+        constraint_type=ConstraintType.MANDATORY,
+        check_method=CheckMethod.RULE,
+        extracted_by="rule",
+    )
+    items = [
+        RequirementItem(id="1", raw_text="x", normalized_text="", **base),
+        RequirementItem(id="2", raw_text="y", normalized_text="   ", **base),
+    ]
+    dedup = SemanticDeduplicator()
+    result = dedup.deduplicate(items)
+    assert len(result) == 2
+
+
+def test_extract_requirements_backward_compatible():
+    from proofreader.extractors.requirement_extractor import extract_requirements
+
+    doc = ParsedDocument(path="test.docx", doc_type="tender_document", title=None, sections=[], blocks=[], headings=[], raw_tables=[])
+    doc.sections = [
+        DocumentSection(
+            DocumentSectionType.REQUIREMENTS,
+            "需求",
+            1,
+            0,
+            10,
+            ["需求"],
+            paragraphs=[TextBlock("1. 服务期限：12个月", "paragraph", paragraph_type=ParagraphType.NUMBERED_REQUIREMENT, index=0)],
+            tables=[],
+        )
+    ]
+    items = extract_requirements(doc)
+    assert len(items) == 1
+    assert "12个月" in items[0].raw_text

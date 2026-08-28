@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import sys
 import tempfile
 import uuid
@@ -22,8 +23,6 @@ from proofreader.exporters import (  # noqa: E402
 from proofreader.exporters.excel_exporter import _level_text  # noqa: E402
 from proofreader.extractors.bid_splitter import BidSectionType, get_blocks_by_section  # noqa: E402
 from proofreader.pipeline import (  # noqa: E402
-    BatchProofreadError,
-    BatchResultItem,
     ProofreadBatchResult,
     ProofreadResult,
     Proofreader,
@@ -63,6 +62,10 @@ ISSUE_TYPE_LABELS = {
 }
 
 
+# 上传文件安全上限：50 MB
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+
 def save_uploaded_files(uploaded_files: Sequence, subdir: str = "") -> List[Path]:
     """保存上传的多个文件到项目临时目录，返回路径列表。
 
@@ -84,6 +87,12 @@ def save_uploaded_files(uploaded_files: Sequence, subdir: str = "") -> List[Path
 
     paths: List[Path] = []
     for uploaded_file in uploaded_files:
+        if uploaded_file.size > _MAX_UPLOAD_BYTES:
+            raise RuntimeError(
+                f"上传文件 {uploaded_file.name} 大小为 "
+                f"{uploaded_file.size / (1024 * 1024):.1f} MB，超过上限 "
+                f"{_MAX_UPLOAD_BYTES / (1024 * 1024):.0f} MB。"
+            )
         safe_name = Path(uploaded_file.name).name
         unique_name = f"{uuid.uuid4().hex}_{safe_name}"
         path = tmp_dir / unique_name
@@ -109,13 +118,25 @@ def render_sidebar():
         accept_multiple_files=True,
         key="bid_files",
     )
+
+    enable_ocr = st.sidebar.checkbox(
+        "启用截图 OCR 检查",
+        value=True,
+        help="关闭可显著加快校对速度，但会跳过对投标文件中截图的 OCR 检查。",
+        key="enable_ocr",
+    )
+
     run = st.sidebar.button("开始校对", type="primary", use_container_width=True)
     reset = st.sidebar.button("重新上传文件", use_container_width=True)
 
-    return req_files, bid_files, run, reset
+    return req_files, bid_files, enable_ocr, run, reset
 
 
-def _prepare_excel_download(result: ProofreadResult | ProofreadBatchResult, exporter=export_to_excel, file_name: str = "校对报告.xlsx") -> bytes:
+def _prepare_excel_download(
+    result: ProofreadResult | ProofreadBatchResult,
+    exporter=export_to_excel,
+    file_name: str = "校对报告.xlsx",
+) -> bytes:
     """生成 Excel 清单并返回二进制内容。"""
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / file_name
@@ -133,8 +154,9 @@ def _prepare_batch_excel_download(batch_result: ProofreadBatchResult) -> bytes:
 def _download_link(data: bytes, file_name: str, mime: str, label: str, color: str = "#0d6efd") -> str:
     """生成基于 Base64 Data URI 的 HTML 下载链接，点击不触发 Streamlit rerun。"""
     b64 = base64.b64encode(data).decode()
+    safe_name = html.escape(file_name, quote=True)
     return (
-        f'<a href="data:{mime};base64,{b64}" download="{file_name}" '
+        f'<a href="data:{mime};base64,{b64}" download="{safe_name}" '
         f'style="display:inline-block; width:100%; text-align:center; padding:10px 16px; '
         f'background-color:{color}; color:white; text-decoration:none; border-radius:6px; '
         f'font-weight:500; box-sizing:border-box;" '
@@ -230,7 +252,12 @@ def render_doc_tab(result: ProofreadResult):
             with st.expander(f"截图问题（{len(result.ocr_issues)} 个）"):
                 for ocr in result.ocr_issues:
                     ctx = f"（位于：{ocr.context_block.text[:40]}...）" if ocr.context_block else ""
-                    st.markdown(f"图片 #{ocr.image_index} {ctx}：{ocr.message[:80]}...")
+                    st.markdown(f"**图片 #{ocr.image_index}** {ctx}")
+                    st.markdown(ocr.message)
+                    if ocr.missing_entities:
+                        st.caption("缺失证书/报告：" + "、".join(ocr.missing_entities))
+                    if ocr.parameter_mismatches:
+                        st.caption("参数偏离：" + "；".join(ocr.parameter_mismatches))
 
         if result.table_issues:
             with st.expander(f"表格问题（{len(result.table_issues)} 个）"):
@@ -244,14 +271,18 @@ def _render_issue_card_inline(issue: ConsistencyIssue) -> None:
     type_text = ISSUE_TYPE_LABELS.get(issue.issue_type, issue.issue_type.value)
 
     st.markdown(
-        f'<div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">'
-        f'<span style="background:{color}; color:white; padding:2px 10px; border-radius:12px; font-size:12px;">{level_text}</span>'
-        f'<span style="font-weight:bold; font-size:15px;">[{type_text}] {issue.issue_id}</span>'
-        f"</div>",
+        '<div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">'
+        f'<span style="background:{color}; color:white; padding:2px 10px; '
+        f'border-radius:12px; font-size:12px;">{level_text}</span>'
+        f'<span style="font-weight:bold; font-size:15px;">[{type_text}] {html.escape(issue.issue_id)}</span>'
+        "</div>",
         unsafe_allow_html=True,
     )
     st.markdown(f"**偏离说明：**{issue.message}")
-    st.markdown(f"<span style='color:#666;'>**建议：**{issue.suggestion}</span>", unsafe_allow_html=True)
+    st.markdown(
+        f"<span style='color:#666;'>**建议：**{html.escape(issue.suggestion)}</span>",
+        unsafe_allow_html=True,
+    )
 
     req_html, bid_html = highlight_differences(issue.requirement_text, issue.bid_text or "")
     c1, c2 = st.columns(2)
@@ -282,8 +313,8 @@ def _render_issue_card_inline(issue: ConsistencyIssue) -> None:
             for idx, (text, score) in enumerate(issue.candidate_bid_texts[1:], start=2):
                 st.markdown(f"**候选 #{idx}**（匹配度 {score:.2f}）")
                 st.markdown(
-                    f'<div style="background:#f5f5f5; padding:8px; border-radius:4px; font-size:13px; line-height:1.5;">'
-                    f"{html_escape(text)}</div>",
+                    '<div style="background:#f5f5f5; padding:8px; border-radius:4px; '
+                    f'font-size:13px; line-height:1.5;">{html_escape(text)}</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -456,7 +487,11 @@ def render_batch_results(batch_result: ProofreadBatchResult):
         tab_labels,
         index=st.session_state.detail_tab_index,
         key="tab_selector",
-        on_change=lambda: setattr(st.session_state, "detail_tab_index", tab_labels.index(st.session_state.tab_selector)),
+        on_change=lambda: setattr(
+            st.session_state,
+            "detail_tab_index",
+            tab_labels.index(st.session_state.tab_selector),
+        ),
         horizontal=True,
         label_visibility="collapsed",
     )
@@ -472,14 +507,27 @@ def main():
     if "batch_result" not in st.session_state:
         st.session_state.batch_result = None
 
-    req_files, bid_files, run, reset = render_sidebar()
+    req_files, bid_files, enable_ocr, run, reset = render_sidebar()
 
     # 处理重新上传
     if reset:
         st.session_state.batch_result = None
         st.session_state.selected_bid_index = 0
         st.session_state.detail_tab_index = 1
+        st.session_state.proofreader = None
         st.rerun()
+
+    # 根据 OCR 开关初始化/复用 Proofreader（启用 OCR 时会预加载模型）
+    if "proofreader" not in st.session_state:
+        st.session_state.proofreader = None
+    current_proofreader: Proofreader | None = st.session_state.proofreader
+    if current_proofreader is None or current_proofreader.ocr_enabled != enable_ocr:
+        if enable_ocr:
+            with st.spinner("正在加载 OCR 模型，首次启动可能需要几秒..."):
+                current_proofreader = Proofreader(ocr_enabled=True)
+        else:
+            current_proofreader = Proofreader(ocr_enabled=False)
+        st.session_state.proofreader = current_proofreader
 
     # 处理开始校对
     if run:
@@ -494,28 +542,30 @@ def main():
         req_paths = save_uploaded_files(req_files, subdir="requirements")
         bid_paths = save_uploaded_files(bid_files, subdir="bids")
 
-        proofreader = Proofreader()
         progress_bar = st.progress(0.0)
         status_text = st.empty()
 
-        items: List[BatchResultItem] = []
-        errors: List[BatchProofreadError] = []
-
         with st.status("正在执行批量校对...", expanded=True) as status:
-            for idx, bid_path in enumerate(bid_paths, start=1):
-                status_text.text(f"正在校对投标文件：{bid_path.name}（{idx}/{total_bids}）")
-                progress_bar.progress(idx / total_bids)
-                # 逐份调用公共 API，保留进度反馈
-                single_result = proofreader.proofread_batch(
-                    req_paths, [bid_path], cache_dir=Path(".cache")
-                )
-                items.extend(single_result.items)
-                errors.extend(single_result.errors)
-                for err in single_result.errors:
+
+            def progress_callback(idx: int, total: int, bid_path: Path) -> None:
+                """由 proofread_batch 回调，更新进度条与状态文本。"""
+                status_text.text(f"正在校对投标文件：{bid_path.name}（{idx}/{total}）")
+                progress_bar.progress(idx / total)
+
+            batch_result = current_proofreader.proofread_batch(
+                req_paths,
+                bid_paths,
+                cache_dir=Path(".cache"),
+                progress_callback=progress_callback,
+            )
+
+            if batch_result.errors:
+                for err in batch_result.errors:
                     st.write(f"❌ {err.bid_path.name} 校对失败：{err.error}")
+
             status.update(label="批量校对完成", state="complete")
 
-        st.session_state.batch_result = ProofreadBatchResult(items=items, errors=errors)
+        st.session_state.batch_result = batch_result
         st.rerun()
 
     # 展示结果

@@ -13,18 +13,20 @@ from proofreader.parsers.docx_parser import (
 
 
 @pytest.fixture(scope="module")
-def requirements_doc_path(sample_docs_dir: Path) -> Path:
-    """返回需求文件的 .doc 版本路径（如不存在则跳过）。"""
+def requirements_doc_path(sample_docs_dir: Path, soffice_available: bool) -> Path:
+    """返回需求文件的 .doc 版本路径（如不可用则跳过）。"""
+    if not soffice_available:
+        pytest.skip("LibreOffice/soffice 不可用，跳过 .doc 相关测试")
     path = sample_docs_dir / "requirements.doc"
     if not path.exists():
         pytest.skip("未找到 .doc 样例文件，跳过 .doc 相关测试")
     return path
 
 
-def test_soffice_is_available() -> None:
-    """当前环境应能找到 LibreOffice/soffice 命令；否则跳过 .doc 测试。"""
-    if find_soffice() is None:
-        pytest.skip("未找到 soffice/libreoffice，跳过 .doc 转换测试")
+def test_soffice_is_available(soffice_available: bool) -> None:
+    """当前环境应能找到可用的 LibreOffice/soffice 命令；否则跳过 .doc 测试。"""
+    if not soffice_available:
+        pytest.skip("未找到可用的 soffice/libreoffice，跳过 .doc 转换测试")
 
 
 def test_convert_doc_to_docx(requirements_doc_path: Path, tmp_path: Path) -> None:
@@ -49,3 +51,104 @@ def test_parse_doc_file_keeps_original_path(requirements_doc_path: Path) -> None
     """解析 .doc 后，ParsedDocument.path 应保留原始 .doc 路径。"""
     parsed = parse_docx(requirements_doc_path)
     assert parsed.path.suffix.lower() == ".doc"
+
+
+def test_parse_docx_para_index_maps_body_paragraphs(tmp_path: Path) -> None:
+    """paragraph/heading 块的 para_index 应与 Document.paragraphs 对齐，表格行为 None。"""
+    from docx import Document
+
+    doc_path = tmp_path / "para_index.docx"
+    doc = Document()
+    doc.add_paragraph("第一段")
+    doc.add_paragraph("")  # 空段落
+    doc.add_paragraph("第二段")
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "表头"
+    table.cell(0, 1).text = "值"
+    table.cell(1, 0).text = "项"
+    table.cell(1, 1).text = "数据"
+    doc.add_paragraph("第三段")
+    doc.save(doc_path)
+
+    parsed = parse_docx(doc_path)
+
+    # 段落块按 body paragraph 顺序出现，para_index 与 Document.paragraphs 一致
+    paragraph_blocks = [b for b in parsed.blocks if b.block_type in ("paragraph", "heading")]
+    assert len(paragraph_blocks) == 3
+    assert paragraph_blocks[0].text == "第一段"
+    assert paragraph_blocks[0].para_index == 0
+    assert paragraph_blocks[1].text == "第二段"
+    assert paragraph_blocks[1].para_index == 2  # 跳过了空段落 index 1
+    assert paragraph_blocks[2].text == "第三段"
+
+
+def test_parse_docx_rejects_oversized_file(tmp_path: Path) -> None:
+    """超过 50 MB 的文档应在解析前被拒绝，避免内存耗尽。"""
+    huge = tmp_path / "huge.docx"
+    with huge.open("wb") as f:
+        # 创建一个 51 MB 的稀疏文件
+        f.seek(51 * 1024 * 1024 - 1)
+        f.write(b"\x00")
+
+    with pytest.raises(RuntimeError, match="超过允许上限"):
+        parse_docx(huge)
+
+
+def test_convert_doc_to_docx_raises_when_soffice_missing(tmp_path: Path, monkeypatch) -> None:
+    """未安装 LibreOffice 时应给出清晰错误。"""
+    import shutil
+    import subprocess
+
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    fake_doc = tmp_path / "fake.doc"
+    fake_doc.write_bytes(b"fake")
+
+    with pytest.raises(RuntimeError, match="未找到 LibreOffice"):
+        convert_doc_to_docx(fake_doc, tmp_path)
+
+
+def test_convert_doc_to_docx_raises_on_subprocess_failure(tmp_path: Path, monkeypatch) -> None:
+    """LibreOffice 转换失败时应抛出 RuntimeError。"""
+    import shutil
+    import subprocess
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/soffice")
+
+    def _failing_run(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(1, cmd=["soffice"], stderr=b"conversion failed")
+
+    monkeypatch.setattr(subprocess, "run", _failing_run)
+    fake_doc = tmp_path / "fake.doc"
+    fake_doc.write_bytes(b"fake")
+
+    with pytest.raises(RuntimeError, match="转换 .doc 文件失败"):
+        convert_doc_to_docx(fake_doc, tmp_path)
+
+
+def test_convert_doc_to_docx_raises_on_timeout(tmp_path: Path, monkeypatch) -> None:
+    """LibreOffice 转换超时时应抛出 RuntimeError。"""
+    import shutil
+    import subprocess
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/soffice")
+
+    def _timeout_run(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["soffice"], timeout=120)
+
+    monkeypatch.setattr(subprocess, "run", _timeout_run)
+    fake_doc = tmp_path / "fake.doc"
+    fake_doc.write_bytes(b"fake")
+
+    with pytest.raises(RuntimeError, match="转换 .doc 文件超时"):
+        convert_doc_to_docx(fake_doc, tmp_path)
+
+
+def test_parsed_document_has_classification(sample_docs_dir: Path) -> None:
+    """parse_docx 应附加文档类型与采购方式分类结果。"""
+    doc_path = sample_docs_dir / "requirements.docx"
+    if not doc_path.exists():
+        pytest.skip("sample requirements.docx not found")
+    parsed = parse_docx(doc_path)
+    assert parsed.doc_type is not None
+    assert parsed.procurement_method is not None
+    assert parsed.classification_confidence > 0

@@ -7,8 +7,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 def _create_sample_image(path: Path):
-    """创建一张包含关键字的测试截图。"""
-    img = Image.new("RGB", (600, 200), color=(240, 240, 240))
+    """创建一张高对比度、大字号的测试截图，便于 OCR 识别。"""
+    width, height = 800, 300
+    img = Image.new("RGB", (width, height), color="white")
     draw = ImageDraw.Draw(img)
 
     # 尝试使用 macOS 常见中文字体
@@ -21,16 +22,17 @@ def _create_sample_image(path: Path):
     font = None
     for fp in font_paths:
         try:
-            font = ImageFont.truetype(fp, 28)
+            font = ImageFont.truetype(fp, 40)
             break
         except Exception:
             continue
     if font is None:
         font = ImageFont.load_default()
 
-    draw.text((30, 30), "系统管理后台截图", fill=(0, 0, 0), font=font)
-    draw.text((30, 80), "功能模块：数据备份、用户管理、权限控制", fill=(50, 50, 50), font=font)
-    draw.text((30, 130), "系统支持每日自动备份", fill=(50, 50, 50), font=font)
+    # 使用纯黑文字、适当增加行距，提升 OCR 识别率
+    draw.text((40, 40), "系统管理后台截图", fill="black", font=font)
+    draw.text((40, 110), "功能模块：数据备份、用户管理", fill="black", font=font)
+    draw.text((40, 180), "系统支持每日自动备份", fill="black", font=font)
     img.save(path)
 
 

@@ -14,8 +14,8 @@ __pycache__/
 *.pth
 *.onnx
 *.pt
-model/
-models/
+/model/
+/models/
 
 # 输出
 output/

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import jieba
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -103,8 +103,8 @@ def _match_tables(
     try:
         all_sigs = req_signatures + bid_signatures
         matrix = vectorizer.fit_transform(all_sigs)
-        req_vectors = matrix[: len(req_tables)]
-        bid_vectors = matrix[len(req_tables) :]
+        req_vectors = matrix[:len(req_tables)]
+        bid_vectors = matrix[len(req_tables):]
         sim_matrix = cosine_similarity(req_vectors, bid_vectors)
     except ValueError:
         return []

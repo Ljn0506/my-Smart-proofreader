@@ -66,12 +66,14 @@ def export_to_excel(result: ProofreadResult, output_path: Path | str) -> Path:
 
     # OCR 问题
     ws4 = wb.create_sheet("截图OCR")
-    ws4.append(["图片编号", "上下文", "缺失关键词", "消息"])
+    ws4.append(["图片编号", "上下文", "缺失关键词", "缺失证书/报告", "参数偏离", "消息"])
     for ocr in result.ocr_issues:
         ws4.append([
             ocr.image_index,
             ocr.context_block.text[:100] if ocr.context_block else "",
             ", ".join(ocr.missing_keywords[:10]),
+            ", ".join(ocr.missing_entities[:10]),
+            "；".join(ocr.parameter_mismatches[:5]),
             ocr.message,
         ])
 
@@ -176,7 +178,7 @@ def export_batch_to_excel(batch_result: ProofreadBatchResult, output_path: Path 
                 "截图OCR",
                 "",
                 ocr.context_block.text[:100] if ocr.context_block else "",
-                "",
+                "；".join(ocr.parameter_mismatches[:5]),
                 ocr.message,
                 "",
             ])

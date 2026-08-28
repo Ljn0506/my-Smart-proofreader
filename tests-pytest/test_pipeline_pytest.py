@@ -35,8 +35,16 @@ def test_typo_issues_found(result: ProofreadResult) -> None:
     assert any(typo.word == "架购" for typo in result.typo_issues)
 
 
-def test_ocr_issues_found(result: ProofreadResult) -> None:
-    """应检出至少 1 处截图 OCR 问题。"""
+def test_ocr_issues_found(sample_docs_dir: Path) -> None:
+    """应检出至少 1 处截图 OCR 问题；若 OCR 引擎不可用则跳过。"""
+    proofreader = Proofreader()
+    if proofreader.ocr_engine is None or not proofreader.ocr_engine.available:
+        pytest.skip("OCR 引擎不可用，跳过截图检查断言")
+    # 使用全新 Proofreader 实例，避免会话级 fixture 的 OCR 缓存影响本次断言
+    result = proofreader.proofread(
+        sample_docs_dir / "requirements.docx",
+        sample_docs_dir / "bid.docx",
+    )
     assert len(result.ocr_issues) >= 1
 
 
@@ -56,8 +64,12 @@ def test_proofreader_runs_on_real_files(sample_docs_dir: Path, proofreader: Proo
     assert result.bid_doc.path.exists()
 
 
-def test_proofreader_runs_on_doc_files(sample_docs_dir: Path, proofreader: Proofreader) -> None:
+def test_proofreader_runs_on_doc_files(
+    sample_docs_dir: Path, proofreader: Proofreader, soffice_available: bool
+) -> None:
     """确保能直接对真实 .doc 文件执行校对。"""
+    if not soffice_available:
+        pytest.skip("LibreOffice/soffice 不可用，跳过 .doc 文件测试")
     req_doc_path = sample_docs_dir / "requirements.doc"
     if not req_doc_path.exists():
         pytest.skip("未找到 .doc 样例文件，跳过本测试")
